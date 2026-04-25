@@ -49,3 +49,25 @@ export function getFollowedArtistsCount() {
     (data) => data.artists?.total ?? 0,
   );
 }
+
+// ---------- Artist endpoints (Lou FTMKZ as artist) ----------
+
+export function getArtist(artistId) {
+  return request(`/artists/${artistId}`);
+}
+
+export function getArtistTopTracks(artistId, market = 'DE') {
+  return request(`/artists/${artistId}/top-tracks?market=${market}`);
+}
+
+export function getArtistAlbums(
+  artistId,
+  { market = 'DE', limit = 50, includeGroups = 'album,single,ep' } = {},
+) {
+  const params = new URLSearchParams({
+    market,
+    limit: String(limit),
+    include_groups: includeGroups,
+  });
+  return request(`/artists/${artistId}/albums?${params.toString()}`);
+}

@@ -2,7 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { TrendingUp, Music, Users, Activity, Flame, LogIn, LogOut } from 'lucide-react';
 import { isConfigured, isLoggedIn, login, logout } from '../lib/spotifyAuth.js';
-import { getMe, getTopTracks } from '../lib/spotifyApi.js';
+import { getMe, getArtist, getArtistTopTracks, getArtistAlbums } from '../lib/spotifyApi.js';
+
+const ARTIST_ID =
+  import.meta.env.VITE_SPOTIFY_ARTIST_ID || '3LaYDsZXr5HlfDY7vtxq0v';
 const MusicDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [monthlyData, setMonthlyData] = useState([]);
@@ -11,9 +14,11 @@ const MusicDashboard = () => {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [hoveredSong, setHoveredSong] = useState(0);
   const [spotifyUser, setSpotifyUser] = useState(null);
+  const [artistProfile, setArtistProfile] = useState(null);
+  const [artistAlbums, setArtistAlbums] = useState([]);
   const [spotifyError, setSpotifyError] = useState(null);
   const [loadingSpotify, setLoadingSpotify] = useState(false);
-  const usingRealData = Boolean(spotifyUser);
+  const usingRealData = Boolean(artistProfile);
   const platforms = [
     { id: 'all', label: 'Alle', color: '#6366f1' },
     { id: 'spotify', label: 'Spotify', color: '#1DB954' },
@@ -79,23 +84,50 @@ const MusicDashboard = () => {
     setMonthlyData(mockMonthlyStreams);
     setTopSongs(mockTopSongs);
   }, []);
-  // Spotify-Daten laden, wenn eingeloggt
+  // Spotify-Daten laden, wenn eingeloggt — Artist-Profil von Lou FTMKZ
   useEffect(() => {
     if (!isLoggedIn()) return;
     let cancelled = false;
     setLoadingSpotify(true);
     setSpotifyError(null);
-    Promise.all([getMe(), getTopTracks('medium_term', 5)])
-      .then(([me, tracks]) => {
+    Promise.all([
+      getMe(),
+      getArtist(ARTIST_ID),
+      getArtistTopTracks(ARTIST_ID, 'DE'),
+      getArtistAlbums(ARTIST_ID, { market: 'DE', limit: 50 }),
+    ])
+      .then(([me, artist, topTracks, albums]) => {
         if (cancelled) return;
         setSpotifyUser(me);
-        // popularity (0-100) ist Spotify-eigene Metrik; *1000 als grobe Streams-Proxy
-        const realSongs = tracks.items.map((t) => ({
-          name: `${t.name} — ${t.artists.map((a) => a.name).join(', ')}`,
-          streams: Math.max(t.popularity * 1000, 1),
-          listeners: Math.max(t.popularity * 200, 1),
-        }));
+        setArtistProfile(artist);
+        // Top Tracks → "streams" als popularity-Proxy für Visualisierung
+        // Spotify popularity = 0-100 Score, ungefähr proportional zur Stream-Aktivität
+        const realSongs = (topTracks.tracks || []).slice(0, 5).map((t) => {
+          const pop = Number.isFinite(t.popularity) ? t.popularity : 0;
+          return {
+            name: t.name,
+            streams: Math.max(pop * 1000, 1),
+            listeners: Math.max(pop * 200, 1),
+            popularity: pop,
+            albumImage: t.album?.images?.[2]?.url || t.album?.images?.[0]?.url,
+          };
+        });
         if (realSongs.length > 0) setTopSongs(realSongs);
+        // Albums dedupen (Spotify listet manche Releases mehrfach für verschiedene Märkte)
+        const seen = new Set();
+        const dedupedAlbums = (albums.items || [])
+          .filter((a) => {
+            const key = a.name.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .sort(
+            (a, b) =>
+              new Date(b.release_date).getTime() -
+              new Date(a.release_date).getTime(),
+          );
+        setArtistAlbums(dedupedAlbums);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -120,17 +152,40 @@ const MusicDashboard = () => {
   // Daten basierend auf Platform berechnen
   const getMetrics = () => {
     if (selectedPlatform === 'all') {
-      return {
+      const base = {
         streams: Object.values(platformData).reduce((sum, p) => sum + p.streams, 0),
         listeners: Object.values(platformData).reduce((sum, p) => sum + p.listeners, 0),
         allTimeHigh: Math.max(...Object.values(platformData).map(p => p.allTimeHigh)),
         followers: Object.values(platformData).reduce((sum, p) => sum + p.followers, 0),
         trend: 11,
       };
+      // Echte Daten aus Spotify-Artist-Profil overlay-en, wenn verbunden
+      if (artistProfile) {
+        return {
+          ...base,
+          followers: artistProfile.followers?.total ?? base.followers,
+          allTimeHigh: topSongs.length > 0
+            ? Math.max(...topSongs.map((s) => s.streams || 0))
+            : base.allTimeHigh,
+        };
+      }
+      return base;
+    }
+    if (selectedPlatform === 'spotify' && artistProfile) {
+      // Bei Spotify-Filter: echte Followers + popularity-basierter All-Time-High
+      return {
+        ...platformData.spotify,
+        followers: artistProfile.followers?.total ?? platformData.spotify.followers,
+        allTimeHigh: topSongs.length > 0
+          ? Math.max(...topSongs.map((s) => s.streams || 0))
+          : platformData.spotify.allTimeHigh,
+      };
     }
     return platformData[selectedPlatform];
   };
   const metrics = getMetrics();
+  // Sicheres Number-Format: NaN/undefined → 0
+  const fmtNum = (v) => (Number.isFinite(v) ? v : 0).toLocaleString('de-DE');
   // KPI-Karten Komponente mit dynamischen Daten
   const KPICard = ({ icon: Icon, label, value, trend, color }) => (
     <div className={`relative overflow-hidden rounded-xl p-6 border transition-all duration-300 group ${color}`}>
@@ -138,7 +193,7 @@ const MusicDashboard = () => {
       <div className="relative flex items-start justify-between">
         <div className="flex-1">
           <p className={`text-sm font-semibold mb-2 ${isDarkMode ? 'text-white/70' : 'opacity-70'}`}>{label}</p>
-          <p className={`text-3xl font-bold mb-3 ${isDarkMode ? 'text-white' : ''}`}>{value.toLocaleString('de-DE')}</p>
+          <p className={`text-3xl font-bold mb-3 ${isDarkMode ? 'text-white' : ''}`}>{fmtNum(value)}</p>
           {trend && (
             <div className={`flex items-center gap-1 text-sm font-semibold ${isDarkMode ? 'text-white/75' : 'opacity-75'}`}>
               <TrendingUp size={16} />
@@ -152,7 +207,11 @@ const MusicDashboard = () => {
       </div>
     </div>
   );
-  const totalStreams = topSongs.length > 0 ? topSongs.reduce((sum, song) => sum + song.streams, 0) : 0;
+  const totalStreams = topSongs.length > 0 ? topSongs.reduce((sum, song) => sum + (Number.isFinite(song.streams) ? song.streams : 0), 0) : 0;
+  const safePct = (v) => {
+    if (!Number.isFinite(v) || !totalStreams) return '0.0';
+    return ((v / totalStreams) * 100).toFixed(1);
+  };
   return (
     <div className={`min-h-screen ${isDarkMode ? 'bg-gradient-to-b from-slate-950 via-slate-900 to-slate-800' : 'bg-gradient-to-b from-slate-50 to-slate-100'}`}>
       <style>{`
@@ -343,10 +402,10 @@ const MusicDashboard = () => {
                     {topSongs[hoveredSong]?.name || 'Loading...'}
                   </p>
                   <p className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                    {topSongs[hoveredSong]?.streams.toLocaleString('de-DE') || '—'}
+                    {topSongs[hoveredSong] ? fmtNum(topSongs[hoveredSong].streams) : '—'}
                   </p>
                   <p className={`text-lg font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                    {topSongs[hoveredSong] ? ((topSongs[hoveredSong].streams / totalStreams) * 100).toFixed(1) + '%' : '—'}
+                    {topSongs[hoveredSong] ? safePct(topSongs[hoveredSong].streams) + '%' : '—'}
                   </p>
                 </div>
               </div>
@@ -354,16 +413,15 @@ const MusicDashboard = () => {
               <div className="w-full space-y-2">
                 {topSongs.map((song, index) => {
                   const colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#ec4899'];
-                  const percentage = ((song.streams / totalStreams) * 100).toFixed(1);
                   return (
                     <div key={index} className={`flex items-center justify-between p-3 rounded-lg ${isDarkMode ? 'bg-slate-800/50 hover:bg-slate-800' : 'bg-slate-50 hover:bg-slate-100'} transition-colors`}>
                       <div className="flex items-center gap-3">
                         <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: colors[index] }} />
-                        <span className={`text-sm font-medium ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{song.name}</span>
+                        <span className={`text-sm font-medium truncate ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{song.name}</span>
                       </div>
-                      <div className="text-right">
-                        <p className={`font-bold text-sm ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{percentage}%</p>
-                        <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{song.streams.toLocaleString('de-DE')}</p>
+                      <div className="text-right shrink-0 ml-3">
+                        <p className={`font-bold text-sm ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{safePct(song.streams)}%</p>
+                        <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{fmtNum(song.streams)}</p>
                       </div>
                     </div>
                   );
@@ -392,10 +450,10 @@ const MusicDashboard = () => {
                 {topSongs.map((song, idx) => (
                   <tr key={idx} className={`border-b transition-colors ${isDarkMode ? 'border-slate-700/50 hover:bg-slate-800/50' : 'border-slate-100 hover:bg-slate-50'}`}>
                     <td className={`py-3 px-4 font-medium text-sm ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{song.name}</td>
-                    <td className={`py-3 px-4 text-right font-semibold text-sm mono ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>{song.streams.toLocaleString('de-DE')}</td>
-                    <td className={`py-3 px-4 text-right font-semibold text-sm mono ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{song.listeners.toLocaleString('de-DE')}</td>
+                    <td className={`py-3 px-4 text-right font-semibold text-sm mono ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>{fmtNum(song.streams)}</td>
+                    <td className={`py-3 px-4 text-right font-semibold text-sm mono ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{fmtNum(song.listeners)}</td>
                     <td className={`py-3 px-4 text-right font-medium text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                      {((song.streams / totalStreams) * 100).toFixed(1)}%
+                      {safePct(song.streams)}%
                     </td>
                   </tr>
                 ))}
@@ -404,6 +462,56 @@ const MusicDashboard = () => {
           </div>
         </div>
       </div>
+      {/* Releases (Artist Albums/Singles) — nur wenn echte Daten geladen */}
+      {usingRealData && artistAlbums.length > 0 && (
+        <div className="max-w-7xl mx-auto px-6 pb-12">
+          <div className={`rounded-2xl p-8 border shadow-sm ${isDarkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}>
+            <div className="mb-8 flex items-end justify-between">
+              <div>
+                <h2 className={`text-2xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>Releases</h2>
+                <p className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {artistAlbums.length} Veröffentlichungen auf Spotify
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+              {artistAlbums.map((album) => (
+                <a
+                  key={album.id}
+                  href={album.external_urls?.spotify || `https://open.spotify.com/album/${album.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`group rounded-xl overflow-hidden border transition-all hover:scale-[1.02] ${isDarkMode ? 'bg-slate-800/50 border-slate-700 hover:border-slate-600' : 'bg-slate-50 border-slate-200 hover:border-slate-300'}`}
+                >
+                  {album.images?.[0]?.url && (
+                    <div className="aspect-square overflow-hidden bg-slate-700">
+                      <img
+                        src={album.images[0].url}
+                        alt={album.name}
+                        loading="lazy"
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                    </div>
+                  )}
+                  <div className="p-3">
+                    <p className={`text-sm font-bold truncate ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                      {album.name}
+                    </p>
+                    <div className="flex items-center justify-between mt-1">
+                      <span className={`text-xs uppercase tracking-wide font-semibold ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
+                        {album.album_type}
+                      </span>
+                      <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                        {album.release_date?.slice(0, 4)}
+                      </span>
+                    </div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       {/* Footer */}
       <div className={`border-t mt-16 ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`}>
         <div className="max-w-7xl mx-auto px-6 py-12">
@@ -411,11 +519,23 @@ const MusicDashboard = () => {
             {usingRealData ? (
               <>
                 <h3 className={`font-bold text-lg mb-3 ${isDarkMode ? 'text-slate-100' : 'text-slate-950'}`}>
-                  Verbunden als {spotifyUser.display_name || spotifyUser.id}
+                  Verbunden — Artist: {artistProfile.name}
                 </h3>
                 <p className={`text-sm mb-4 max-w-2xl ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                  Top Songs zeigen deine echten Spotify-Lieblingstracks der letzten ~6 Monate. KPIs (Streams, Listeners, Followers) bleiben Mock-Daten — globale Stream-Zahlen liefert die Spotify Web API nicht; das kommt später über Spotify-for-Artists.
+                  Top Songs und Releases unten zeigen die echten Spotify-Daten von <strong>{artistProfile.name}</strong>. <strong>Followers</strong> und <strong>All-Time High</strong> sind echt; <strong>Total Streams</strong> und <strong>Unique Listeners</strong> bleiben Mock — globale Stream-Counts liefert die Web API nicht, das kommt später über Spotify-for-Artists.
                 </p>
+                {artistProfile.genres?.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {artistProfile.genres.slice(0, 5).map((g) => (
+                      <span
+                        key={g}
+                        className={`px-2 py-1 rounded text-xs ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-700'}`}
+                      >
+                        {g}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {loadingSpotify && (
                   <p className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>Lade Spotify-Daten...</p>
                 )}
