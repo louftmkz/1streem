@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { TrendingUp, Music, Users, Activity, Flame } from 'lucide-react';
+import { TrendingUp, Music, Users, Activity, Flame, LogIn, LogOut } from 'lucide-react';
+import { isConfigured, isLoggedIn, login, logout } from '../lib/spotifyAuth.js';
+import { getMe, getTopTracks } from '../lib/spotifyApi.js';
 const MusicDashboard = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [monthlyData, setMonthlyData] = useState([]);
@@ -8,6 +10,10 @@ const MusicDashboard = () => {
   const [selectedPlatform, setSelectedPlatform] = useState('all');
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [hoveredSong, setHoveredSong] = useState(0);
+  const [spotifyUser, setSpotifyUser] = useState(null);
+  const [spotifyError, setSpotifyError] = useState(null);
+  const [loadingSpotify, setLoadingSpotify] = useState(false);
+  const usingRealData = Boolean(spotifyUser);
   const platforms = [
     { id: 'all', label: 'Alle', color: '#6366f1' },
     { id: 'spotify', label: 'Spotify', color: '#1DB954' },
@@ -73,6 +79,44 @@ const MusicDashboard = () => {
     setMonthlyData(mockMonthlyStreams);
     setTopSongs(mockTopSongs);
   }, []);
+  // Spotify-Daten laden, wenn eingeloggt
+  useEffect(() => {
+    if (!isLoggedIn()) return;
+    let cancelled = false;
+    setLoadingSpotify(true);
+    setSpotifyError(null);
+    Promise.all([getMe(), getTopTracks('medium_term', 5)])
+      .then(([me, tracks]) => {
+        if (cancelled) return;
+        setSpotifyUser(me);
+        // popularity (0-100) ist Spotify-eigene Metrik; *1000 als grobe Streams-Proxy
+        const realSongs = tracks.items.map((t) => ({
+          name: `${t.name} — ${t.artists.map((a) => a.name).join(', ')}`,
+          streams: Math.max(t.popularity * 1000, 1),
+          listeners: Math.max(t.popularity * 200, 1),
+        }));
+        if (realSongs.length > 0) setTopSongs(realSongs);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setSpotifyError(e.message);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoadingSpotify(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const handleConnect = () => {
+    login().catch((e) => setSpotifyError(e.message));
+  };
+  const handleDisconnect = () => {
+    logout();
+    setSpotifyUser(null);
+    window.location.reload();
+  };
   // Daten basierend auf Platform berechnen
   const getMetrics = () => {
     if (selectedPlatform === 'all') {
@@ -129,11 +173,35 @@ const MusicDashboard = () => {
                 <p className={`text-xs font-medium mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Music performance across all platforms</p>
               </div>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
                 <p className={`text-xs uppercase tracking-widest font-semibold ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Updated</p>
                 <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{new Date().toLocaleDateString('de-DE')}</p>
               </div>
+              {isConfigured() && !usingRealData && (
+                <button
+                  onClick={handleConnect}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm bg-[#1DB954] text-white hover:bg-[#1ed760] transition-all duration-200 shadow-sm"
+                >
+                  <LogIn size={14} />
+                  Connect Spotify
+                </button>
+              )}
+              {usingRealData && (
+                <div className="flex items-center gap-2">
+                  <span className={`hidden md:flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${isDarkMode ? 'bg-emerald-500/15 text-emerald-300' : 'bg-emerald-50 text-emerald-700'}`}>
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    {spotifyUser.display_name || spotifyUser.id}
+                  </span>
+                  <button
+                    onClick={handleDisconnect}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-xs transition-all duration-200 ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'}`}
+                    title="Spotify trennen"
+                  >
+                    <LogOut size={14} />
+                  </button>
+                </div>
+              )}
               <button
                 onClick={() => setIsDarkMode(!isDarkMode)}
                 className={`px-3 py-2 rounded-lg font-bold text-xs transition-all duration-200 ${isDarkMode ? 'bg-slate-800 text-slate-200 hover:bg-slate-700' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'}`}
@@ -340,16 +408,36 @@ const MusicDashboard = () => {
       <div className={`border-t mt-16 ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`}>
         <div className="max-w-7xl mx-auto px-6 py-12">
           <div className={`rounded-2xl p-8 border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-gradient-to-br from-slate-50 to-slate-100 border-slate-200'}`}>
-            <h3 className={`font-bold text-lg mb-3 ${isDarkMode ? 'text-slate-100' : 'text-slate-950'}`}>Ready to Connect Real Data?</h3>
-            <p className={`text-sm mb-4 max-w-2xl ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-              This dashboard is currently showing example data. To integrate real Spotify data, you'll need to create a Developer Account and authenticate with OAuth. It takes about 5 minutes.
-            </p>
-            <ol className={`text-sm space-y-2 list-decimal list-inside ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-              <li>Create a Spotify Developer Account at developer.spotify.com</li>
-              <li>Generate API credentials (Client ID & Secret)</li>
-              <li>Authenticate your account with OAuth</li>
-              <li>Dashboard will auto-update daily with your real metrics</li>
-            </ol>
+            {usingRealData ? (
+              <>
+                <h3 className={`font-bold text-lg mb-3 ${isDarkMode ? 'text-slate-100' : 'text-slate-950'}`}>
+                  Verbunden als {spotifyUser.display_name || spotifyUser.id}
+                </h3>
+                <p className={`text-sm mb-4 max-w-2xl ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                  Top Songs zeigen deine echten Spotify-Lieblingstracks der letzten ~6 Monate. KPIs (Streams, Listeners, Followers) bleiben Mock-Daten — globale Stream-Zahlen liefert die Spotify Web API nicht; das kommt später über Spotify-for-Artists.
+                </p>
+                {loadingSpotify && (
+                  <p className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>Lade Spotify-Daten...</p>
+                )}
+                {spotifyError && (
+                  <p className="text-xs text-red-400 mt-2">Fehler: {spotifyError}</p>
+                )}
+              </>
+            ) : (
+              <>
+                <h3 className={`font-bold text-lg mb-3 ${isDarkMode ? 'text-slate-100' : 'text-slate-950'}`}>
+                  {isConfigured() ? 'Mit Spotify verbinden' : 'Spotify-Setup ausstehend'}
+                </h3>
+                <p className={`text-sm mb-4 max-w-2xl ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                  {isConfigured()
+                    ? 'Klick oben auf "Connect Spotify", um echte Daten aus deinem Account zu laden. Top Songs werden dann durch deine Spotify-Lieblingstracks ersetzt.'
+                    : 'Setze die Environment Variable VITE_SPOTIFY_CLIENT_ID in Vercel und re-deploy, damit der Login-Flow aktiv wird.'}
+                </p>
+                {spotifyError && (
+                  <p className="text-xs text-red-400 mt-2">Fehler: {spotifyError}</p>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>
