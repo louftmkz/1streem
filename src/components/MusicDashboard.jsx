@@ -22,11 +22,21 @@ const MusicDashboard = () => {
   const platforms = [
     { id: 'all', label: 'Alle', color: '#6366f1' },
     { id: 'spotify', label: 'Spotify', color: '#1DB954' },
-    { id: 'deezer', label: 'Deezer', color: '#FF0080' },
-    { id: 'applemusic', label: 'Apple', color: '#FA243C' },
-    { id: 'amazonmusic', label: 'Amazon', color: '#00A3E0' },
+    { id: 'deezer', label: 'Deezer', color: '#A238FF' },
+    { id: 'applemusic', label: 'Apple', color: '#5C6470' },
+    { id: 'amazonmusic', label: 'Amazon', color: '#06B6D4' },
     { id: 'youtube', label: 'YouTube', color: '#FF0000' },
   ];
+  const themeColor = (platforms.find((p) => p.id === selectedPlatform) || platforms[0]).color;
+  // hex + alpha helper (alpha 0..1)
+  const withAlpha = (hex, alpha) => {
+    const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255)
+      .toString(16)
+      .padStart(2, '0');
+    return `${hex}${a}`;
+  };
+  // 5 Abstufungen für Pie/Cells: 100/78/58/40/25 % Deckkraft
+  const themeShades = [1.0, 0.78, 0.58, 0.4, 0.25].map((a) => withAlpha(themeColor, a));
   // Mock-Daten pro Plattform
   const platformData = {
     spotify: {
@@ -186,23 +196,30 @@ const MusicDashboard = () => {
   const metrics = getMetrics();
   // Sicheres Number-Format: NaN/undefined → 0
   const fmtNum = (v) => (Number.isFinite(v) ? v : 0).toLocaleString('de-DE');
-  // KPI-Karten Komponente mit dynamischen Daten
-  const KPICard = ({ icon: Icon, label, value, trend, color }) => (
-    <div className={`relative overflow-hidden rounded-xl p-6 border transition-all duration-300 group ${color}`}>
+  // KPI-Karten Komponente — alle in der aktuellen Theme-Farbe, mit dezenter Aufhellung pro Karte
+  const KPICard = ({ icon: Icon, label, value, trend }) => (
+    <div
+      className="relative overflow-hidden rounded-xl p-6 border transition-all duration-300 group"
+      style={{
+        background: `linear-gradient(135deg, ${themeColor} 0%, ${withAlpha(themeColor, 0.85)} 100%)`,
+        borderColor: withAlpha(themeColor, 0.3),
+        color: '#ffffff',
+      }}
+    >
       <div className="absolute inset-0 opacity-5" />
       <div className="relative flex items-start justify-between">
         <div className="flex-1">
-          <p className={`text-sm font-semibold mb-2 ${isDarkMode ? 'text-white/70' : 'opacity-70'}`}>{label}</p>
-          <p className={`text-3xl font-bold mb-3 ${isDarkMode ? 'text-white' : ''}`}>{fmtNum(value)}</p>
+          <p className="text-sm font-semibold mb-2 text-white/70">{label}</p>
+          <p className="text-3xl font-bold mb-3 text-white">{fmtNum(value)}</p>
           {trend && (
-            <div className={`flex items-center gap-1 text-sm font-semibold ${isDarkMode ? 'text-white/75' : 'opacity-75'}`}>
+            <div className="flex items-center gap-1 text-sm font-semibold text-white/75">
               <TrendingUp size={16} />
               {trend}% vs. letzter Monat
             </div>
           )}
         </div>
         <div className="p-3 rounded-lg opacity-30 group-hover:opacity-50 transition-opacity">
-          <Icon size={28} className={isDarkMode ? 'text-white' : ''} />
+          <Icon size={28} className="text-white" />
         </div>
       </div>
     </div>
@@ -224,7 +241,12 @@ const MusicDashboard = () => {
         <div className="max-w-7xl mx-auto px-6 py-6">
           <div className="flex items-end justify-between mb-4">
             <div className="flex items-end gap-3">
-              <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-xl p-3">
+              <div
+                className="rounded-xl p-3"
+                style={{
+                  background: `linear-gradient(135deg, ${themeColor} 0%, ${withAlpha(themeColor, 0.75)} 100%)`,
+                }}
+              >
                 <Music size={28} className="text-white" />
               </div>
               <div>
@@ -296,34 +318,10 @@ const MusicDashboard = () => {
       <div className="max-w-7xl mx-auto px-6 py-12">
         {/* KPI Section */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          <KPICard
-            icon={Music}
-            label="Total Streams"
-            value={metrics.streams}
-            trend={metrics.trend}
-            color="bg-gradient-to-br from-indigo-500 to-indigo-600 text-white border-indigo-300"
-          />
-          <KPICard
-            icon={Users}
-            label="Unique Listeners"
-            value={metrics.listeners}
-            trend={metrics.trend}
-            color="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white border-emerald-300"
-          />
-          <KPICard
-            icon={Flame}
-            label="All-Time High"
-            value={metrics.allTimeHigh}
-            trend={metrics.trend}
-            color="bg-gradient-to-br from-orange-500 to-orange-600 text-white border-orange-300"
-          />
-          <KPICard
-            icon={TrendingUp}
-            label="Followers"
-            value={metrics.followers}
-            trend={metrics.trend}
-            color="bg-gradient-to-br from-pink-500 to-pink-600 text-white border-pink-300"
-          />
+          <KPICard icon={Music} label="Total Streams" value={metrics.streams} trend={metrics.trend} />
+          <KPICard icon={Users} label="Unique Listeners" value={metrics.listeners} trend={metrics.trend} />
+          <KPICard icon={Flame} label="All-Time High" value={metrics.allTimeHigh} trend={metrics.trend} />
+          <KPICard icon={TrendingUp} label="Followers" value={metrics.followers} trend={metrics.trend} />
         </div>
         {/* Charts Section */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-12">
@@ -352,17 +350,17 @@ const MusicDashboard = () => {
                 <Line
                   type="monotone"
                   dataKey="streams"
-                  stroke="#6366f1"
+                  stroke={themeColor}
                   strokeWidth={3}
-                  dot={{ fill: '#6366f1', r: 5 }}
+                  dot={{ fill: themeColor, r: 5 }}
                   activeDot={{ r: 7 }}
                 />
                 <Line
                   type="monotone"
                   dataKey="listeners"
-                  stroke="#10b981"
+                  stroke={withAlpha(themeColor, 0.55)}
                   strokeWidth={3}
-                  dot={{ fill: '#10b981', r: 5 }}
+                  dot={{ fill: withAlpha(themeColor, 0.55), r: 5 }}
                   activeDot={{ r: 7 }}
                 />
               </LineChart>
@@ -391,7 +389,7 @@ const MusicDashboard = () => {
                       onMouseLeave={() => setHoveredSong(0)}
                     >
                       {topSongs.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#ec4899'][index]} />
+                        <Cell key={`cell-${index}`} fill={themeShades[index % themeShades.length]} />
                       ))}
                     </Pie>
                   </PieChart>
@@ -412,11 +410,10 @@ const MusicDashboard = () => {
               {/* Legend */}
               <div className="w-full space-y-2">
                 {topSongs.map((song, index) => {
-                  const colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#ec4899'];
                   return (
                     <div key={index} className={`flex items-center justify-between p-3 rounded-lg ${isDarkMode ? 'bg-slate-800/50 hover:bg-slate-800' : 'bg-slate-50 hover:bg-slate-100'} transition-colors`}>
                       <div className="flex items-center gap-3">
-                        <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: colors[index] }} />
+                        <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: themeShades[index % themeShades.length] }} />
                         <span className={`text-sm font-medium truncate ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{song.name}</span>
                       </div>
                       <div className="text-right shrink-0 ml-3">
@@ -450,8 +447,8 @@ const MusicDashboard = () => {
                 {topSongs.map((song, idx) => (
                   <tr key={idx} className={`border-b transition-colors ${isDarkMode ? 'border-slate-700/50 hover:bg-slate-800/50' : 'border-slate-100 hover:bg-slate-50'}`}>
                     <td className={`py-3 px-4 font-medium text-sm ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{song.name}</td>
-                    <td className={`py-3 px-4 text-right font-semibold text-sm mono ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>{fmtNum(song.streams)}</td>
-                    <td className={`py-3 px-4 text-right font-semibold text-sm mono ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>{fmtNum(song.listeners)}</td>
+                    <td className="py-3 px-4 text-right font-semibold text-sm mono" style={{ color: themeColor }}>{fmtNum(song.streams)}</td>
+                    <td className="py-3 px-4 text-right font-semibold text-sm mono" style={{ color: withAlpha(themeColor, 0.65) }}>{fmtNum(song.listeners)}</td>
                     <td className={`py-3 px-4 text-right font-medium text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                       {safePct(song.streams)}%
                     </td>
@@ -499,7 +496,9 @@ const MusicDashboard = () => {
                     </p>
                     <div className="flex items-center justify-between mt-1">
                       <span className={`text-xs uppercase tracking-wide font-semibold ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                        {album.album_type}
+                        {album.album_type === 'single' && album.total_tracks >= 4
+                          ? 'EP'
+                          : album.album_type}
                       </span>
                       <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                         {album.release_date?.slice(0, 4)}
