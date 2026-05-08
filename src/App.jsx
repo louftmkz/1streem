@@ -222,7 +222,26 @@ function EmptyHint() {
 // -----------------------------------------------------------------------------
 
 async function loadStats() {
-  // Phase 2: backend (Railway scraper)
+  // Primary: stats.json from the GitHub-Actions scraper (committed daily)
+  try {
+    const res = await fetch(`/stats.json?t=${Date.now()}`); // bust cache
+    if (res.ok) {
+      const data = await res.json();
+      // The scraper writes the same shape we already use, plus a fetchedAt
+      return {
+        artistName: data.artistName,
+        songCount: data.songCount,
+        totalStreams: data.totalStreams,
+        topTracks: data.topTracks || [],
+        asOf: data.asOf,
+        source: 'auto',
+      };
+    }
+  } catch (e) {
+    console.warn('stats.json not available yet:', e.message);
+  }
+
+  // Optional: external backend (only if VITE_BACKEND_URL is set)
   const backendUrl = import.meta.env.VITE_BACKEND_URL;
   if (backendUrl) {
     try {
@@ -237,7 +256,7 @@ async function loadStats() {
     }
   }
 
-  // Phase 1: manual via env vars
+  // Fallback: manual via env vars
   const total = parseNum(import.meta.env.VITE_TOTAL_STREAMS);
   const count = parseNum(import.meta.env.VITE_SONG_COUNT);
   let topTracks = [];
