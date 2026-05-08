@@ -1,12 +1,50 @@
 # 1streem
 
-Music-Analytics-Dashboard. Aggregiert Spotify, Deezer, Apple Music, Amazon Music und YouTube in einer View.
+Spotify Stream Aggregator für Artists. Zeigt Total Streams, Songanzahl, Durchschnitt pro Song und Top 10 — aus **allen** Tracks deines Artist-Profils inklusive "Enthalten in".
 
-Deployed auf Vercel: <https://1streem.vercel.app>
+Live: <https://1streem.vercel.app>
 
 ## Stack
 
-Vite + React 18, Tailwind CSS 3, Recharts, Lucide. Aktuell Frontend-only mit Mock-Daten. Backend (Express + MongoDB + Puppeteer-Scraper) liegt unter `legacy/` und wird in einer späteren Phase auf Railway deployed.
+Vite + React 18 + Tailwind CSS 3, Frontend-only auf Vercel. Keine API-Keys im Repo, kein OAuth.
+
+## Wie kommen die Zahlen rein?
+
+Die Spotify Web API liefert keine globalen Stream-Counts pro Track. Daher zwei Strategien:
+
+### Phase 1 — Manuelle Eingabe via Vercel Env Vars
+
+Du liest die Zahlen aus [Spotify for Artists](https://artists.spotify.com) ab und trägst sie als Env Vars in Vercel ein. Dashboard zeigt sie sofort. Update = Vars anpassen + Redeploy.
+
+| Env Var | Beispiel | Erklärung |
+|---|---|---|
+| `VITE_ARTIST_NAME` | `Lou FTMKZ` | Anzeigename oben im Header |
+| `VITE_TOTAL_STREAMS` | `2456789` | All-time Total Streams (S4A → Audience) |
+| `VITE_SONG_COUNT` | `42` | Anzahl Songs |
+| `VITE_STATS_AS_OF` | `2026-05-08` | Datum, an dem die Zahlen abgegriffen wurden |
+| `VITE_TOP_TRACKS_JSON` | siehe unten | JSON-Array der Top 10 |
+
+`VITE_TOP_TRACKS_JSON` Format:
+
+```json
+[
+  {"name":"FRIEDRICHSHAIN","streams":987654},
+  {"name":"STAUB","streams":543210},
+  {"name":"...","streams":123456}
+]
+```
+
+In Vercel: Project → Settings → Environment Variables → Add. Eine Zeile pro Var, alle als Production. JSON-String als ein einzeiliger String einfügen. Anschließend Deployments → ⋯ → Redeploy.
+
+### Phase 2 — Auto-Update via Backend-Scraper (kommt)
+
+Ein Backend (Railway, Puppeteer) loggt sich täglich mit deinem S4A-Cookie ein, scraped die Zahlen, exposed `/api/stats`. Du setzt dann nur noch:
+
+| Env Var | Beispiel |
+|---|---|
+| `VITE_BACKEND_URL` | `https://1streem-backend.up.railway.app` |
+
+Ist das gesetzt, ignoriert der Frontend die manuellen Vars. Setup-Anleitung kommt im nächsten Schritt.
 
 ## Lokale Entwicklung
 
@@ -15,7 +53,7 @@ npm install
 npm run dev
 ```
 
-Läuft auf <http://localhost:5173>.
+Lokale Env Vars in `.env.local` (siehe `.env.example`).
 
 ## Build
 
@@ -24,21 +62,6 @@ npm run build
 npm run preview
 ```
 
-## Mock-Modus aus, Spotify-OAuth an
+## Verhalten ohne Daten
 
-1. Spotify Developer App anlegen: <https://developer.spotify.com/dashboard>
-2. Redirect URI registrieren: `https://1streem.vercel.app/callback`
-3. In Vercel → Settings → Environment Variables setzen:
-   - `VITE_SPOTIFY_CLIENT_ID`
-   - `VITE_SPOTIFY_REDIRECT_URI` = `https://1streem.vercel.app/callback`
-4. In `src/components/MusicDashboard.jsx` `MOCK_MODE` auf `false` setzen.
-5. Redeploy.
-
-## Nächste Schritte
-
-- OAuth-Callback-Seite (`/callback`) bauen, die den Auth-Code einlöst
-- Backend auf Railway deployen (Code unter `legacy/`)
-- Daily Scraper via `node-cron` aufsetzen oder auf Spotify Web API umbauen
-- MongoDB Atlas Cluster verbinden
-
-Siehe `legacy/1STREEM_LAUNCH_GUIDE.md` für den ursprünglichen Full-Stack-Deployment-Plan.
+Wenn weder `VITE_BACKEND_URL` noch die manuellen Vars gesetzt sind, zeigt das Dashboard überall `—`. Keine Mock-Zahlen. Status-Pill rechts oben sagt `kein data`.
