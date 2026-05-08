@@ -96,53 +96,75 @@ const MusicDashboard = () => {
     setTopSongs(mockTopSongs);
   }, []);
   // Spotify-Daten laden, wenn eingeloggt — Artist-Profil von Lou FTMKZ
+  // Promise.allSettled = jeder Call separat, partielle Erfolge erlaubt
   useEffect(() => {
     if (!isLoggedIn()) return;
     let cancelled = false;
     setLoadingSpotify(true);
     setSpotifyError(null);
-    Promise.all([
+    Promise.allSettled([
       getMe(),
       getArtist(ARTIST_ID),
       getArtistTopTracks(ARTIST_ID, 'DE'),
       getArtistAlbums(ARTIST_ID, { market: 'DE', limit: 50 }),
     ])
-      .then(([me, artist, topTracks, albums]) => {
+      .then((results) => {
         if (cancelled) return;
-        setSpotifyUser(me);
-        setArtistProfile(artist);
-        // Top Tracks → "streams" als popularity-Proxy für Visualisierung
-        // Spotify popularity = 0-100 Score, ungefähr proportional zur Stream-Aktivität
-        const realSongs = (topTracks.tracks || []).slice(0, 5).map((t) => {
-          const pop = Number.isFinite(t.popularity) ? t.popularity : 0;
-          return {
-            name: t.name,
-            streams: Math.max(pop * 1000, 1),
-            listeners: Math.max(pop * 200, 1),
-            popularity: pop,
-            albumImage: t.album?.images?.[2]?.url || t.album?.images?.[0]?.url,
-          };
+        const [meRes, artistRes, topTracksRes, albumsRes] = results;
+        const labels = ['/me', `/artists/${ARTIST_ID}`, 'top-tracks', 'albums'];
+        const errors = [];
+        results.forEach((r, i) => {
+          if (r.status === 'rejected') {
+            console.error(`Spotify call failed: ${labels[i]}`, r.reason);
+            errors.push(`${labels[i]}: ${r.reason?.message || 'Fehler'}`);
+          } else {
+            console.log(`Spotify call OK: ${labels[i]}`);
+          }
         });
-        if (realSongs.length > 0) setTopSongs(realSongs);
-        // Albums dedupen (Spotify listet manche Releases mehrfach für verschiedene Märkte)
-        const seen = new Set();
-        const dedupedAlbums = (albums.items || [])
-          .filter((a) => {
-            const key = a.name.toLowerCase();
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          })
-          .sort(
-            (a, b) =>
-              new Date(b.release_date).getTime() -
-              new Date(a.release_date).getTime(),
-          );
-        setArtistAlbums(dedupedAlbums);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setSpotifyError(e.message);
+
+        // /me: User-Profil (für Display-Name)
+        if (meRes.status === 'fulfilled') setSpotifyUser(meRes.value);
+
+        // Artist-Profile: für Followers + Genres
+        if (artistRes.status === 'fulfilled') setArtistProfile(artistRes.value);
+
+        // Top Tracks → Songs/Pie/Tabelle
+        if (topTracksRes.status === 'fulfilled') {
+          const realSongs = (topTracksRes.value.tracks || []).slice(0, 5).map((t) => {
+            const pop = Number.isFinite(t.popularity) ? t.popularity : 0;
+            return {
+              name: t.name,
+              streams: Math.max(pop * 1000, 1),
+              listeners: Math.max(pop * 200, 1),
+              popularity: pop,
+              albumImage: t.album?.images?.[2]?.url || t.album?.images?.[0]?.url,
+            };
+          });
+          if (realSongs.length > 0) setTopSongs(realSongs);
+        }
+
+        // Albums → Releases-Grid
+        if (albumsRes.status === 'fulfilled') {
+          const seen = new Set();
+          const dedupedAlbums = (albumsRes.value.items || [])
+            .filter((a) => {
+              const key = a.name.toLowerCase();
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            })
+            .sort(
+              (a, b) =>
+                new Date(b.release_date).getTime() -
+                new Date(a.release_date).getTime(),
+            );
+          setArtistAlbums(dedupedAlbums);
+        }
+
+        // Fehlersammlung — nur anzeigen wenn überhaupt was kaputt ist
+        if (errors.length > 0) {
+          setSpotifyError(errors.join(' | '));
+        }
       })
       .finally(() => {
         if (cancelled) return;
