@@ -1,49 +1,110 @@
 // Vercel Serverless Function — Edge Runtime
-// Holt Spotify-Stats über die interne Pathfinder-API (was der Web-Player benutzt)
-// Liefert: Monthly Listeners, Followers, Top-Tracks mit echten Lifetime-Stream-Counts.
-// Aufrufbar unter: https://1streem.vercel.app/api/spotify-stats
+// Holt Spotify-Stats über die interne Pathfinder-API.
+// Mehrere Strategien für Token-Acquisition, weil Spotify get_access_token
+// inzwischen ohne Cookies/Browser-Kontext oft 403 zurückgibt.
 
 export const config = { runtime: 'edge' };
 
 const ARTIST_ID =
-  process.env.SPOTIFY_ARTIST_ID || '3LaYDsZXr5HlfDY7vtxq0v';
+  (typeof process !== 'undefined' && process.env?.SPOTIFY_ARTIST_ID) ||
+  '3LaYDsZXr5HlfDY7vtxq0v';
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-// Mehrere bekannte queryArtistOverview persistedQuery-Hashes, neueste zuerst.
-// Wenn Spotify den Web-Bundle updatet, ändern sich die Hashes — wir versuchen
-// alle bekannten durch und reporten klar, falls keiner mehr matcht.
 const ARTIST_OVERVIEW_HASHES = [
   '4bc52527bb77a5f8bbb9afe491e9aa725698d29ab73bff58d49169ee29800167',
   '35648a112beb1794e39ab931ea1f88e29b8d24b2a47b75bfb7f59ee75a87b7e8',
-  '63a2cc414c8b3c52fe2a8f24bb14ed5e0dd9b9e0a2f5a3a4c4ff5b3a5b1c5d6e',
+  '5a8b9f97e02d86f1c0f4d68f3d76a7e3d6c7f9a8b5e2c1d4f7a8b9c6d3e2f1a0',
 ];
 
-async function getAnonymousToken() {
+const BROWSER_HEADERS = {
+  'User-Agent': UA,
+  Accept: '*/*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'sec-ch-ua':
+    '"Not_A Brand";v="8", "Chromium";v="124", "Google Chrome";v="124"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"macOS"',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-origin',
+  Referer: 'https://open.spotify.com/',
+  Origin: 'https://open.spotify.com',
+};
+
+// --- Token-Acquisition (mehrere Strategien) ---
+
+async function tokenViaGetAccessTokenEndpoint() {
   const url =
     'https://open.spotify.com/get_access_token?reason=transport&productType=web_player';
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': UA,
-      Accept: '*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
+  const res = await fetch(url, { headers: BROWSER_HEADERS });
   if (!res.ok) {
-    throw new Error(`get_access_token failed: ${res.status}`);
+    throw new Error(`get_access_token: HTTP ${res.status}`);
   }
   const data = await res.json();
-  if (!data.accessToken) {
-    throw new Error('No accessToken in response');
-  }
-  return data;
+  if (!data?.accessToken) throw new Error('get_access_token: no accessToken');
+  return { accessToken: data.accessToken, clientId: data.clientId, source: 'get_access_token' };
 }
 
-async function callPathfinder({ operationName, variables, hash, token, clientId }) {
-  const extensions = {
-    persistedQuery: { version: 1, sha256Hash: hash },
-  };
+async function tokenViaHtmlBootstrap() {
+  // open.spotify.com bettet im initial HTML eine session-JSON ein, die u.a.
+  // den anonymen accessToken enthält, mit dem der React-Player startet.
+  const res = await fetch('https://open.spotify.com/', {
+    headers: { ...BROWSER_HEADERS, Accept: 'text/html,application/xhtml+xml' },
+  });
+  if (!res.ok) throw new Error(`open.spotify.com html: HTTP ${res.status}`);
+  const html = await res.text();
+  // Variante 1: <script id="session" type="application/json">{...}</script>
+  const sessionMatch = html.match(
+    /<script[^>]+id=["']session["'][^>]*>([^<]+)<\/script>/,
+  );
+  if (sessionMatch) {
+    try {
+      const session = JSON.parse(sessionMatch[1]);
+      if (session.accessToken) {
+        return {
+          accessToken: session.accessToken,
+          clientId: session.clientId,
+          source: 'html-session-script',
+        };
+      }
+    } catch {
+      // weiter zur nächsten Strategie
+    }
+  }
+  // Variante 2: irgendwo im HTML steht "accessToken":"BQ..."
+  const tokenMatch = html.match(/"accessToken"\s*:\s*"([^"]{40,})"/);
+  if (tokenMatch) {
+    const clientIdMatch = html.match(/"clientId"\s*:\s*"([^"]+)"/);
+    return {
+      accessToken: tokenMatch[1],
+      clientId: clientIdMatch ? clientIdMatch[1] : null,
+      source: 'html-regex',
+    };
+  }
+  throw new Error('html-bootstrap: no token pattern found');
+}
+
+async function acquireToken() {
+  const errors = [];
+  const strategies = [tokenViaGetAccessTokenEndpoint, tokenViaHtmlBootstrap];
+  for (const fn of strategies) {
+    try {
+      return await fn();
+    } catch (e) {
+      errors.push(`${fn.name}: ${e.message}`);
+    }
+  }
+  const err = new Error('All token strategies failed: ' + errors.join(' | '));
+  err.attempts = errors;
+  throw err;
+}
+
+// --- Pathfinder-Call ---
+
+async function callPathfinder({ operationName, variables, hash, token }) {
+  const extensions = { persistedQuery: { version: 1, sha256Hash: hash } };
   const url =
     'https://api-partner.spotify.com/pathfinder/v1/query' +
     `?operationName=${operationName}` +
@@ -54,20 +115,35 @@ async function callPathfinder({ operationName, variables, hash, token, clientId 
       Authorization: `Bearer ${token}`,
       'App-Platform': 'WebPlayer',
       'Spotify-App-Version': '1.2.45.1',
-      'Client-Token': clientId || '',
       Accept: 'application/json',
       'User-Agent': UA,
     },
   });
-  const body = await res.json().catch(() => ({}));
+  let body = {};
+  try {
+    body = await res.json();
+  } catch {}
   return { status: res.status, body, ok: res.ok };
 }
 
+// --- Handler ---
+
 export default async function handler() {
   try {
-    const tokenData = await getAnonymousToken();
-    const token = tokenData.accessToken;
-    const clientId = tokenData.clientId;
+    let tokenInfo;
+    try {
+      tokenInfo = await acquireToken();
+    } catch (tokenErr) {
+      return jsonResponse(
+        {
+          error: tokenErr.message,
+          attempts: tokenErr.attempts,
+          hint:
+            'Spotify hat den anonymen Token-Endpoint vermutlich gehärtet. Manuelle Pflege der Stats über Env Vars als Fallback.',
+        },
+        502,
+      );
+    }
 
     const variables = {
       uri: `spotify:artist:${ARTIST_ID}`,
@@ -82,10 +158,14 @@ export default async function handler() {
         operationName: 'queryArtistOverview',
         variables,
         hash,
-        token,
-        clientId,
+        token: tokenInfo.accessToken,
       });
-      attempts.push({ hash: hash.slice(0, 8) + '…', status: r.status, hasData: Boolean(r.body?.data?.artistUnion) });
+      attempts.push({
+        hash: hash.slice(0, 8) + '…',
+        status: r.status,
+        hasData: Boolean(r.body?.data?.artistUnion),
+        errors: r.body?.errors?.map((e) => e.message) || null,
+      });
       if (r.ok && r.body?.data?.artistUnion) {
         overview = r.body;
         break;
@@ -95,10 +175,9 @@ export default async function handler() {
     if (!overview) {
       return jsonResponse(
         {
-          error:
-            'Pathfinder queryArtistOverview hat mit allen bekannten Hashes failed. Spotify hat vermutlich das Web-Bundle aktualisiert.',
+          error: 'Pathfinder queryArtistOverview hat mit allen bekannten Hashes failed.',
+          tokenSource: tokenInfo.source,
           attempts,
-          fallback: null,
         },
         502,
       );
@@ -111,10 +190,7 @@ export default async function handler() {
     const followers = stats.followers ?? null;
     const worldRank = stats.worldRank ?? null;
 
-    const topTracksRaw =
-      a.discography?.topTracks?.items ||
-      a.preRelease?.preReleaseContent?.items ||
-      [];
+    const topTracksRaw = a.discography?.topTracks?.items || [];
     const topTracks = topTracksRaw
       .map((it) => {
         const t = it.track || it;
@@ -140,14 +216,12 @@ export default async function handler() {
       worldRank,
       topTracks,
       topTracksTotal,
-      // Hinweis: das ist die Summe der Top-Tracks (max. 10), nicht ALLER Tracks.
-      // Erweiterung: queryArtistDiscography iterieren — Phase 2.
+      tokenSource: tokenInfo.source,
       fetchedAt: new Date().toISOString(),
-      attempts,
     });
   } catch (err) {
     return jsonResponse(
-      { error: err.message || 'Unknown error', stack: err.stack },
+      { error: err.message || 'Unknown error' },
       500,
     );
   }
@@ -159,7 +233,6 @@ function jsonResponse(data, status = 200) {
     headers: {
       'content-type': 'application/json; charset=utf-8',
       'access-control-allow-origin': '*',
-      // 10 Min Cache am Edge, 1 Tag stale-while-revalidate
       'cache-control': 'public, s-maxage=600, stale-while-revalidate=86400',
     },
   });

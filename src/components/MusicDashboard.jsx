@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { TrendingUp, Music, Users, Activity, Flame, LogIn, LogOut } from 'lucide-react';
 import { isConfigured, isLoggedIn, login, logout } from '../lib/spotifyAuth.js';
-import { getMe, getArtist, getArtistTopTracks, getArtistAlbums } from '../lib/spotifyApi.js';
+import { getMe } from '../lib/spotifyApi.js';
 
 const ARTIST_ID =
   import.meta.env.VITE_SPOTIFY_ARTIST_ID || '3LaYDsZXr5HlfDY7vtxq0v';
@@ -131,80 +131,21 @@ const MusicDashboard = () => {
       cancelled = true;
     };
   }, []);
-  // Spotify-Daten laden, wenn eingeloggt — Artist-Profil von Lou FTMKZ
-  // Promise.allSettled = jeder Call separat, partielle Erfolge erlaubt
+  // OAuth-basiertes Laden ist deaktiviert — Spotify hat die Artist-Endpoints für
+  // neue Dev-Apps restricted (403). Pathfinder über /api/spotify-stats ist der
+  // Hauptpfad. Wir laden hier nur noch /me (funktioniert immer) für den Display-Name,
+  // sonst nichts. So entstehen keine störenden Error-Messages.
   useEffect(() => {
     if (!isLoggedIn()) return;
     let cancelled = false;
-    setLoadingSpotify(true);
-    setSpotifyError(null);
-    Promise.allSettled([
-      getMe(),
-      getArtist(ARTIST_ID),
-      getArtistTopTracks(ARTIST_ID, 'DE'),
-      getArtistAlbums(ARTIST_ID, { market: 'DE', limit: 50 }),
-    ])
-      .then((results) => {
+    getMe()
+      .then((me) => {
         if (cancelled) return;
-        const [meRes, artistRes, topTracksRes, albumsRes] = results;
-        const labels = ['/me', `/artists/${ARTIST_ID}`, 'top-tracks', 'albums'];
-        const errors = [];
-        results.forEach((r, i) => {
-          if (r.status === 'rejected') {
-            console.error(`Spotify call failed: ${labels[i]}`, r.reason);
-            errors.push(`${labels[i]}: ${r.reason?.message || 'Fehler'}`);
-          } else {
-            console.log(`Spotify call OK: ${labels[i]}`);
-          }
-        });
-
-        // /me: User-Profil (für Display-Name)
-        if (meRes.status === 'fulfilled') setSpotifyUser(meRes.value);
-
-        // Artist-Profile: für Followers + Genres
-        if (artistRes.status === 'fulfilled') setArtistProfile(artistRes.value);
-
-        // Top Tracks → Songs/Pie/Tabelle
-        if (topTracksRes.status === 'fulfilled') {
-          const realSongs = (topTracksRes.value.tracks || []).slice(0, 5).map((t) => {
-            const pop = Number.isFinite(t.popularity) ? t.popularity : 0;
-            return {
-              name: t.name,
-              streams: Math.max(pop * 1000, 1),
-              listeners: Math.max(pop * 200, 1),
-              popularity: pop,
-              albumImage: t.album?.images?.[2]?.url || t.album?.images?.[0]?.url,
-            };
-          });
-          if (realSongs.length > 0) setTopSongs(realSongs);
-        }
-
-        // Albums → Releases-Grid
-        if (albumsRes.status === 'fulfilled') {
-          const seen = new Set();
-          const dedupedAlbums = (albumsRes.value.items || [])
-            .filter((a) => {
-              const key = a.name.toLowerCase();
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            })
-            .sort(
-              (a, b) =>
-                new Date(b.release_date).getTime() -
-                new Date(a.release_date).getTime(),
-            );
-          setArtistAlbums(dedupedAlbums);
-        }
-
-        // Fehlersammlung — nur anzeigen wenn überhaupt was kaputt ist
-        if (errors.length > 0) {
-          setSpotifyError(errors.join(' | '));
-        }
+        setSpotifyUser(me);
       })
-      .finally(() => {
+      .catch((e) => {
         if (cancelled) return;
-        setLoadingSpotify(false);
+        console.warn('OAuth /me failed:', e.message);
       });
     return () => {
       cancelled = true;
