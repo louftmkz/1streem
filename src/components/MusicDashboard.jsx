@@ -19,7 +19,10 @@ const MusicDashboard = () => {
   const [spotifyError, setSpotifyError] = useState(null);
   const [loadingSpotify, setLoadingSpotify] = useState(false);
   const [hasToken, setHasToken] = useState(() => isLoggedIn());
-  const usingRealData = Boolean(artistProfile);
+  // Pathfinder-Stats vom eigenen Vercel-Backend (kein OAuth nötig)
+  const [pathfinderStats, setPathfinderStats] = useState(null);
+  const [pathfinderError, setPathfinderError] = useState(null);
+  const usingRealData = Boolean(artistProfile) || Boolean(pathfinderStats);
   const platforms = [
     { id: 'all', label: 'Alle', color: '#6366f1' },
     { id: 'spotify', label: 'Spotify', color: '#1DB954' },
@@ -94,6 +97,39 @@ const MusicDashboard = () => {
     ];
     setMonthlyData(mockMonthlyStreams);
     setTopSongs(mockTopSongs);
+  }, []);
+  // Pathfinder-Stats vom eigenen Backend laden — kein OAuth nötig, läuft sofort
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/spotify-stats')
+      .then(async (res) => {
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok || data.error) {
+          setPathfinderError(data.error || `HTTP ${res.status}`);
+          console.error('Pathfinder fetch failed:', data);
+          return;
+        }
+        setPathfinderStats(data);
+        console.log('Pathfinder stats loaded:', data);
+        // Top Songs aus echten Pathfinder-Stream-Counts
+        if (Array.isArray(data.topTracks) && data.topTracks.length > 0) {
+          const realSongs = data.topTracks.slice(0, 5).map((t) => ({
+            name: t.name,
+            streams: t.playcount || 0,
+            listeners: Math.round((t.playcount || 0) * 0.18), // grobe Schätzung als Platzhalter
+            albumImage: t.albumImage,
+          }));
+          setTopSongs(realSongs);
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setPathfinderError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
   // Spotify-Daten laden, wenn eingeloggt — Artist-Profil von Lou FTMKZ
   // Promise.allSettled = jeder Call separat, partielle Erfolge erlaubt
@@ -187,7 +223,13 @@ const MusicDashboard = () => {
     window.location.reload();
   };
   // Daten basierend auf Platform berechnen
+  // Pathfinder hat Priorität, dann Spotify-OAuth-Profil, dann Mock
   const getMetrics = () => {
+    const pf = pathfinderStats; // shortcut
+    const allTimeHighFromTopTracks = pf?.topTracks?.length
+      ? Math.max(...pf.topTracks.map((t) => t.playcount || 0))
+      : null;
+
     if (selectedPlatform === 'all') {
       const base = {
         streams: Object.values(platformData).reduce((sum, p) => sum + p.streams, 0),
@@ -196,7 +238,17 @@ const MusicDashboard = () => {
         followers: Object.values(platformData).reduce((sum, p) => sum + p.followers, 0),
         trend: 11,
       };
-      // Echte Daten aus Spotify-Artist-Profil overlay-en, wenn verbunden
+      // Pathfinder-Werte einsetzen wo vorhanden
+      if (pf) {
+        return {
+          ...base,
+          streams: pf.topTracksTotal ?? base.streams,
+          listeners: pf.monthlyListeners ?? base.listeners,
+          followers: pf.followers ?? base.followers,
+          allTimeHigh: allTimeHighFromTopTracks ?? base.allTimeHigh,
+        };
+      }
+      // Fallback: nur Followers aus OAuth-Profil
       if (artistProfile) {
         return {
           ...base,
@@ -208,15 +260,27 @@ const MusicDashboard = () => {
       }
       return base;
     }
-    if (selectedPlatform === 'spotify' && artistProfile) {
-      // Bei Spotify-Filter: echte Followers + popularity-basierter All-Time-High
-      return {
-        ...platformData.spotify,
-        followers: artistProfile.followers?.total ?? platformData.spotify.followers,
-        allTimeHigh: topSongs.length > 0
-          ? Math.max(...topSongs.map((s) => s.streams || 0))
-          : platformData.spotify.allTimeHigh,
-      };
+    if (selectedPlatform === 'spotify') {
+      const base = platformData.spotify;
+      if (pf) {
+        return {
+          ...base,
+          streams: pf.topTracksTotal ?? base.streams,
+          listeners: pf.monthlyListeners ?? base.listeners,
+          followers: pf.followers ?? base.followers,
+          allTimeHigh: allTimeHighFromTopTracks ?? base.allTimeHigh,
+        };
+      }
+      if (artistProfile) {
+        return {
+          ...base,
+          followers: artistProfile.followers?.total ?? base.followers,
+          allTimeHigh: topSongs.length > 0
+            ? Math.max(...topSongs.map((s) => s.streams || 0))
+            : base.allTimeHigh,
+        };
+      }
+      return base;
     }
     return platformData[selectedPlatform];
   };
@@ -553,12 +617,25 @@ const MusicDashboard = () => {
             {usingRealData ? (
               <>
                 <h3 className={`font-bold text-lg mb-3 ${isDarkMode ? 'text-slate-100' : 'text-slate-950'}`}>
-                  Verbunden — Artist: {artistProfile.name}
+                  Verbunden — Artist: {artistProfile?.name || pathfinderStats?.artistName || 'Lou FTMKZ'}
                 </h3>
                 <p className={`text-sm mb-4 max-w-2xl ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                  Top Songs und Releases unten zeigen die echten Spotify-Daten von <strong>{artistProfile.name}</strong>. <strong>Followers</strong> und <strong>All-Time High</strong> sind echt; <strong>Total Streams</strong> und <strong>Unique Listeners</strong> bleiben Mock — globale Stream-Counts liefert die Web API nicht, das kommt später über Spotify-for-Artists.
+                  {pathfinderStats ? (
+                    <>
+                      <strong>Total Streams</strong>, <strong>Monthly Listeners</strong> und <strong>Followers</strong> sind echte Zahlen aus Spotifys Pathfinder-API — gleicher Datenstand wie auf deiner public Spotify-Profilseite. <em>Total Streams</em> ist aktuell die Summe der Top-10-Tracks (Phase 2 erweitert das auf alle Releases). Daten werden 10 Min am Edge gecached.
+                    </>
+                  ) : (
+                    <>
+                      Top Songs und Releases unten zeigen die echten Spotify-Daten von <strong>{artistProfile.name}</strong>. <strong>Followers</strong> und <strong>All-Time High</strong> sind echt; <strong>Total Streams</strong> und <strong>Unique Listeners</strong> bleiben Mock.
+                    </>
+                  )}
                 </p>
-                {artistProfile.genres?.length > 0 && (
+                {pathfinderStats?.fetchedAt && (
+                  <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>
+                    Stand: {new Date(pathfinderStats.fetchedAt).toLocaleString('de-DE')}
+                  </p>
+                )}
+                {artistProfile?.genres?.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-3">
                     {artistProfile.genres.slice(0, 5).map((g) => (
                       <span
@@ -569,6 +646,9 @@ const MusicDashboard = () => {
                       </span>
                     ))}
                   </div>
+                )}
+                {pathfinderError && (
+                  <p className="text-xs text-amber-400 mt-2">Pathfinder-Hinweis: {pathfinderError}</p>
                 )}
                 {loadingSpotify && (
                   <p className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>Lade Spotify-Daten...</p>
