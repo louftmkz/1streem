@@ -18,6 +18,7 @@ const MusicDashboard = () => {
   const [artistAlbums, setArtistAlbums] = useState([]);
   const [spotifyError, setSpotifyError] = useState(null);
   const [loadingSpotify, setLoadingSpotify] = useState(false);
+  const [hasToken, setHasToken] = useState(() => isLoggedIn());
   const usingRealData = Boolean(artistProfile);
   const platforms = [
     { id: 'all', label: 'Alle', color: '#6366f1' },
@@ -157,6 +158,10 @@ const MusicDashboard = () => {
   const handleDisconnect = () => {
     logout();
     setSpotifyUser(null);
+    setArtistProfile(null);
+    setArtistAlbums([]);
+    setSpotifyError(null);
+    setHasToken(false);
     window.location.reload();
   };
   // Daten basierend auf Platform berechnen
@@ -259,7 +264,7 @@ const MusicDashboard = () => {
                 <p className={`text-xs uppercase tracking-widest font-semibold ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Updated</p>
                 <p className={`font-bold text-sm ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{new Date().toLocaleDateString('de-DE')}</p>
               </div>
-              {isConfigured() && !usingRealData && (
+              {isConfigured() && !hasToken && (
                 <button
                   onClick={handleConnect}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm bg-[#1DB954] text-white hover:bg-[#1ed760] transition-all duration-200 shadow-sm"
@@ -268,12 +273,20 @@ const MusicDashboard = () => {
                   Connect Spotify
                 </button>
               )}
-              {usingRealData && (
+              {hasToken && (
                 <div className="flex items-center gap-2">
-                  <span className={`hidden md:flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${isDarkMode ? 'bg-emerald-500/15 text-emerald-300' : 'bg-emerald-50 text-emerald-700'}`}>
-                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                    {spotifyUser.display_name || spotifyUser.id}
-                  </span>
+                  {usingRealData && (
+                    <span className={`hidden md:flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${isDarkMode ? 'bg-emerald-500/15 text-emerald-300' : 'bg-emerald-50 text-emerald-700'}`}>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                      {spotifyUser?.display_name || spotifyUser?.id}
+                    </span>
+                  )}
+                  {!usingRealData && spotifyError && (
+                    <span className={`hidden md:flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${isDarkMode ? 'bg-red-500/15 text-red-300' : 'bg-red-50 text-red-700'}`}>
+                      <span className="w-2 h-2 rounded-full bg-red-400" />
+                      Verbindung fehlgeschlagen
+                    </span>
+                  )}
                   <button
                     onClick={handleDisconnect}
                     className={`flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-xs transition-all duration-200 ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'}`}
@@ -549,11 +562,29 @@ const MusicDashboard = () => {
                 </h3>
                 <p className={`text-sm mb-4 max-w-2xl ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                   {isConfigured()
-                    ? 'Klick oben auf "Connect Spotify", um echte Daten aus deinem Account zu laden. Top Songs werden dann durch deine Spotify-Lieblingstracks ersetzt.'
+                    ? 'Klick oben auf "Connect Spotify", um echte Spotify-Daten deines Artist-Profils zu laden.'
                     : 'Setze die Environment Variable VITE_SPOTIFY_CLIENT_ID in Vercel und re-deploy, damit der Login-Flow aktiv wird.'}
                 </p>
                 {spotifyError && (
-                  <p className="text-xs text-red-400 mt-2">Fehler: {spotifyError}</p>
+                  <div className={`mt-3 p-4 rounded-lg border ${isDarkMode ? 'bg-red-500/10 border-red-500/20' : 'bg-red-50 border-red-200'}`}>
+                    <p className={`text-sm font-semibold mb-1 ${isDarkMode ? 'text-red-300' : 'text-red-700'}`}>Verbindung fehlgeschlagen</p>
+                    <p className={`text-xs mb-3 break-words ${isDarkMode ? 'text-red-400/80' : 'text-red-600'}`}>{spotifyError}</p>
+                    {spotifyError.includes('403') && (
+                      <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                        Wahrscheinlich: Spotify-User noch nicht im{' '}
+                        <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener noreferrer" className="underline hover:text-emerald-400">Developer-Dashboard</a>
+                        {' '}als Tester eingetragen, oder die E-Mail dort matcht nicht mit deinem Spotify-Account.
+                      </p>
+                    )}
+                    {hasToken && (
+                      <button
+                        onClick={handleDisconnect}
+                        className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold ${isDarkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'}`}
+                      >
+                        <LogOut size={12} /> Token löschen & neu versuchen
+                      </button>
+                    )}
+                  </div>
                 )}
               </>
             )}

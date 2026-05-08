@@ -62,7 +62,7 @@ export function getArtistTopTracks(artistId, market = 'DE') {
 
 export function getArtistAlbums(
   artistId,
-  { market = 'DE', limit = 50, includeGroups = 'album,single,ep' } = {},
+  { market = 'DE', limit = 50, includeGroups = 'album,single' } = {},
 ) {
   const params = new URLSearchParams({
     market,
