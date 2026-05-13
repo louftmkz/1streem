@@ -49,8 +49,11 @@ export default function App() {
         .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
       `}</style>
 
-      {/* Header */}
-      <header className="border-b border-neutral-900">
+      {/* Header — extends background into iOS status-bar area */}
+      <header
+        className="border-b border-neutral-900 bg-[#0a0a0a]"
+        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      >
         <div className="max-w-3xl mx-auto px-6 py-5 flex items-center justify-between">
           <div className="flex items-baseline gap-3">
             <span className="text-lg font-bold tracking-tight">1streem</span>
@@ -126,7 +129,10 @@ export default function App() {
         </section>
       </main>
 
-      <footer className="border-t border-neutral-900 mt-24">
+      <footer
+        className="border-t border-neutral-900 mt-24"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
         <div className="max-w-3xl mx-auto px-6 py-8 text-xs text-neutral-600 leading-relaxed">
           {state === 'empty' && <EmptyHint />}
           {state === 'error' && (
