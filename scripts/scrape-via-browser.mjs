@@ -1,29 +1,24 @@
 #!/usr/bin/env node
 /**
- * Playwright-based Spotify stats scraper.
+ * Spotify stats scraper — Playwright + Stealth.
  *
- * Why: Spotify's edge (Akamai) blocks Node.js fetch based on TLS
- * fingerprinting, even from residential IPs with valid cookies. A real
- * headless Chromium has the right TLS signature and isn't blocked.
+ * Akamai blocks Node-fetch AND plain headless Chromium based on bot
+ * fingerprinting (navigator.webdriver, missing plugins, request shape,
+ * etc.). The stealth plugin patches dozens of these signals so the
+ * browser looks like a real user's Chrome.
  *
- * Flow:
- *   1. Launch headless Chrome
- *   2. Set the sp_dc cookie on the .spotify.com domain
- *   3. Navigate to open.spotify.com so the page session is alive
- *   4. Run our scrape logic INSIDE the page via page.evaluate(): the
- *      browser then issues Pathfinder calls with real-browser TLS and
- *      our user-bound session cookies.
- *   5. Aggregate, write public/stats.json
- *
- * Env:
- *   SPOTIFY_SP_DC       — required
- *   SPOTIFY_ARTIST_ID   — optional, defaults to 3LaYDsZXr5HlfDY7vtxq0v
+ * Plus: warm-up by visiting the actual artist page first, letting
+ * Spotify set its session-related cookies organically before we call
+ * get_access_token.
  */
 
-import { chromium } from 'playwright';
+import { chromium } from 'playwright-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+chromium.use(StealthPlugin());
 
 const ARTIST_ID =
   process.env.SPOTIFY_ARTIST_ID || '3LaYDsZXr5HlfDY7vtxq0v';
@@ -41,17 +36,27 @@ const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 async function main() {
-  console.log(`[1streem] Scraping artist ${ARTIST_ID} via headless browser...`);
+  console.log(`[1streem] Scraping artist ${ARTIST_ID} via stealth Chromium...`);
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-site-isolation-trials',
+    ],
+  });
+
   try {
     const context = await browser.newContext({
       userAgent: UA,
-      viewport: { width: 1280, height: 800 },
+      viewport: { width: 1440, height: 900 },
       locale: 'en-US',
+      timezoneId: 'Europe/Berlin',
+      deviceScaleFactor: 2,
     });
 
-    // Inject the persistent login cookie
     await context.addCookies([
       {
         name: 'sp_dc',
@@ -71,13 +76,23 @@ async function main() {
       }
     });
 
-    console.log('[1streem] Visiting open.spotify.com...');
-    await page.goto('https://open.spotify.com/', {
+    // Warm-up: visit the actual artist page like a real user would.
+    // This lets Spotify set sp_t, sp_key and other session cookies before
+    // we hit get_access_token.
+    console.log('[1streem] Warming up on /artist page...');
+    await page.goto(`https://open.spotify.com/artist/${ARTIST_ID}`, {
       waitUntil: 'domcontentloaded',
       timeout: 60000,
     });
-    // Brief settle — let the SPA boot & token refresh kick in
-    await page.waitForTimeout(3000);
+    // Wait long enough for the SPA to boot and run its own auth flow
+    await page.waitForTimeout(8000);
+
+    // Log which cookies got set
+    const cookies = await context.cookies('https://open.spotify.com');
+    console.log(
+      '[1streem] Cookies set:',
+      cookies.map((c) => c.name).join(', '),
+    );
 
     console.log('[1streem] Running scrape logic inside the page context...');
     const result = await page.evaluate(scrapeInPage, ARTIST_ID);
@@ -106,16 +121,10 @@ async function main() {
   }
 }
 
-// ----------------------------------------------------------------------------
-// This function is serialized and executed in the page context (real browser).
-// It cannot reference anything outside its arguments and the browser globals.
-// ----------------------------------------------------------------------------
-
 async function scrapeInPage(ARTIST_ID) {
   try {
     const ARTIST_URI = `spotify:artist:${ARTIST_ID}`;
 
-    // 1) Authenticated token (same-origin request, cookies attached automatically)
     const tokRes = await fetch(
       '/get_access_token?reason=transport&productType=web_player',
       { credentials: 'include' },
@@ -133,7 +142,7 @@ async function scrapeInPage(ARTIST_ID) {
       };
     const token = tokData.accessToken;
 
-    // 2) Discover Pathfinder hashes by fetching the page's own JS bundles
+    // Hash discovery from JS bundles
     const homeRes = await fetch('/');
     const homeHtml = await homeRes.text();
     const bundleUrls = new Set();
@@ -176,12 +185,9 @@ async function scrapeInPage(ARTIST_ID) {
     }
     const missingHashes = need.filter((n) => !hashes[n]);
     if (missingHashes.length) {
-      return {
-        __error: 'Hashes not discovered: ' + missingHashes.join(', '),
-      };
+      return { __error: 'Hashes not discovered: ' + missingHashes.join(', ') };
     }
 
-    // 3) Pathfinder helper
     async function pf(operationName, hash, variables) {
       const url =
         'https://api-partner.spotify.com/pathfinder/v1/query' +
@@ -214,7 +220,6 @@ async function scrapeInPage(ARTIST_ID) {
       return b.data;
     }
 
-    // 4) Artist overview (name, monthly listeners, followers)
     let artistName = null,
       monthlyListeners = null,
       followers = null;
@@ -232,7 +237,6 @@ async function scrapeInPage(ARTIST_ID) {
       console.warn('artist overview failed:', e.message);
     }
 
-    // 5) Full discography (paginated)
     const ownReleases = [];
     {
       let offset = 0;
@@ -258,7 +262,6 @@ async function scrapeInPage(ARTIST_ID) {
       }
     }
 
-    // 6) Appears-on
     let appearsOnReleases = [];
     try {
       const d = await pf(
@@ -277,7 +280,6 @@ async function scrapeInPage(ARTIST_ID) {
       console.warn('appears-on failed:', e.message);
     }
 
-    // 7) Per-album tracklist
     const tracksByUri = new Map();
     async function ingest(releases, requireOurArtist) {
       for (const r of releases) {
