@@ -33,10 +33,18 @@ cd "$REPO_DIR"
 git fetch origin main
 git reset --hard origin/main
 
-# Run scraper
+# Ensure deps incl. Playwright are installed (cheap no-op when up to date)
+if [ ! -d node_modules/playwright ]; then
+  echo "==> Installing dependencies (first run)..."
+  npm install
+  echo "==> Downloading Chromium for Playwright..."
+  npx playwright install chromium
+fi
+
+# Run scraper (browser-based — bypasses Akamai's TLS fingerprinting)
 SPOTIFY_SP_DC="$SPOTIFY_SP_DC" \
 SPOTIFY_ARTIST_ID="${SPOTIFY_ARTIST_ID:-3LaYDsZXr5HlfDY7vtxq0v}" \
-  node scripts/scrape-spotify.mjs
+  node scripts/scrape-via-browser.mjs
 
 # Push if changed
 if [ -n "$(git status --porcelain public/stats.json)" ]; then
