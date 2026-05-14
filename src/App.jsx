@@ -321,7 +321,8 @@ function SongsView({
           placeholder="Suche..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
+          className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-base placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
+          style={{ fontSize: '16px' }}
         />
         <button
           onClick={() => setShowAdd(!showAdd)}
@@ -407,8 +408,8 @@ function Row({ song, editing, onEdit, onSave, onCancel, onNext, onDelete }) {
             onSave(e.currentTarget.value);
             onCancel();
           }}
-          className="mono w-32 text-right bg-neutral-900 border border-neutral-700 rounded px-2 py-1 tabular-nums focus:outline-none"
-          style={{ borderColor: ACCENT }}
+          className="mono w-32 text-right bg-neutral-900 border rounded px-2 py-1 tabular-nums focus:outline-none"
+          style={{ borderColor: ACCENT, fontSize: '16px' }}
         />
       ) : (
         <button
@@ -442,48 +443,63 @@ function AddForm({ onSave, onCancel }) {
     onSave({ name, date, streams });
   };
 
+  const inputStyle = { fontSize: '16px' };
+  const inputClass =
+    'w-full bg-[#0a0a0a] border border-neutral-800 rounded px-3 py-3 text-base focus:outline-none focus:border-neutral-700';
+  const labelClass =
+    'block text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-2';
+
   return (
     <form
       onSubmit={submit}
-      className="bg-neutral-900/40 border border-neutral-800 rounded p-4 space-y-3"
+      className="bg-neutral-900 border border-neutral-800 rounded-lg p-5 space-y-5"
     >
-      <input
-        type="text"
-        placeholder="Songname"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        autoFocus
-        required
-        className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-neutral-700"
-      />
-      <div className="grid grid-cols-2 gap-3">
+      <div>
+        <label className={labelClass}>Songname</label>
         <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          aria-label="Release-Datum"
-          className="bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-neutral-700"
-        />
-        <input
-          type="number"
-          inputMode="numeric"
-          placeholder="Streams"
-          value={streams}
-          onChange={(e) => setStreams(e.target.value)}
-          className="bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-neutral-700"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+          required
+          className={inputClass}
+          style={inputStyle}
         />
       </div>
-      <div className="flex gap-2 justify-end">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelClass}>Release</label>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className={inputClass}
+            style={inputStyle}
+          />
+        </div>
+        <div>
+          <label className={labelClass}>Streams</label>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={streams}
+            onChange={(e) => setStreams(e.target.value)}
+            className={inputClass + ' mono tabular-nums'}
+            style={inputStyle}
+          />
+        </div>
+      </div>
+      <div className="flex gap-2 justify-end pt-1">
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-1.5 text-sm text-neutral-500"
+          className="px-4 py-2 text-sm font-semibold text-neutral-500 hover:text-neutral-300"
         >
           Abbrechen
         </button>
         <button
           type="submit"
-          className="px-3 py-1.5 text-sm font-bold rounded text-black"
+          className="px-4 py-2 text-sm font-bold rounded text-black"
           style={{ backgroundColor: ACCENT }}
         >
           Speichern
