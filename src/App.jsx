@@ -37,6 +37,8 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [pendingImport, setPendingImport] = useState(null);
+  const fileInputRef = useRef(null);
 
   // Persist on every change
   useEffect(() => {
@@ -100,26 +102,45 @@ export default function App() {
     return idx >= 0 && idx + 1 < filtered.length ? filtered[idx + 1].id : null;
   };
 
-  // Export / Import
-  const exportJSON = async () => {
-    const data = JSON.stringify(songs, null, 2);
-    try {
-      await navigator.clipboard.writeText(data);
-      alert(`${songs.length} Songs als JSON in die Zwischenablage kopiert.`);
-    } catch {
-      window.prompt('Manuell kopieren (Cmd+C):', data);
-    }
+  // Backup → JSON-Datei downloaden
+  const downloadBackup = () => {
+    const payload = {
+      app: '1streem',
+      artist: ARTIST_NAME,
+      exportedAt: new Date().toISOString(),
+      songs,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `1streem-backup-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
-  const importJSON = () => {
-    const raw = window.prompt(
-      'JSON hier reinpasten (überschreibt aktuellen Stand):',
-    );
-    if (!raw) return;
+  // Wiederherstellen → File-Picker
+  const pickRestoreFile = () => fileInputRef.current?.click();
+
+  const handleFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
     try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) throw new Error('Kein Array');
-      const cleaned = parsed
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const rawSongs = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.songs)
+          ? parsed.songs
+          : null;
+      if (!rawSongs) throw new Error('Datei enthält keine Songs.');
+      const cleaned = rawSongs
         .filter((x) => x && typeof x.name === 'string')
         .map((x) => ({
           id: x.id || uuid(),
@@ -127,16 +148,15 @@ export default function App() {
           date: x.date || '',
           streams: Number(x.streams) || 0,
         }));
-      if (
-        !window.confirm(
-          `Import: ${cleaned.length} Songs gefunden. Aktuelle ${songs.length} ersetzen?`,
-        )
-      )
-        return;
-      setSongs(cleaned);
-    } catch (e) {
-      alert('Import fehlgeschlagen: ' + e.message);
+      setPendingImport({ songs: cleaned, fileName: file.name });
+    } catch (err) {
+      setPendingImport({ error: err.message || 'Datei nicht lesbar.' });
     }
+  };
+
+  const confirmImport = () => {
+    if (pendingImport?.songs) setSongs(pendingImport.songs);
+    setPendingImport(null);
   };
 
   return (
@@ -192,29 +212,125 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer: Export/Import */}
+      {/* Footer: Backup/Restore */}
       <footer
         className="border-t border-neutral-900 mt-8"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
         <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-2 text-xs">
           <button
-            onClick={exportJSON}
+            onClick={downloadBackup}
             className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
           >
-            Export JSON
+            Backup
           </button>
           <button
-            onClick={importJSON}
+            onClick={pickRestoreFile}
             className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
           >
-            Import JSON
+            Wiederherstellen
           </button>
           <span className="text-neutral-700 ml-auto mono tabular-nums">
             {songCount} {songCount === 1 ? 'Song' : 'Songs'}
           </span>
         </div>
       </footer>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/json,.json"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+
+      {pendingImport && (
+        <Modal onClose={() => setPendingImport(null)}>
+          {pendingImport.error ? (
+            <>
+              <h3 className="text-base font-bold text-neutral-100">
+                Datei nicht lesbar
+              </h3>
+              <p className="text-sm text-neutral-400">
+                {pendingImport.error}
+              </p>
+              <div className="flex justify-end pt-1">
+                <button
+                  onClick={() => setPendingImport(null)}
+                  className="px-4 py-2 text-sm font-bold rounded text-black"
+                  style={{ backgroundColor: ACCENT }}
+                >
+                  OK
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 className="text-base font-bold text-neutral-100">
+                Backup einspielen?
+              </h3>
+              <p className="text-sm text-neutral-400">
+                <span className="mono text-neutral-200">
+                  {pendingImport.fileName}
+                </span>{' '}
+                enthält{' '}
+                <span className="mono text-neutral-200 tabular-nums">
+                  {pendingImport.songs.length}
+                </span>{' '}
+                Songs. Deine aktuellen{' '}
+                <span className="mono text-neutral-200 tabular-nums">
+                  {songCount}
+                </span>{' '}
+                Songs werden ersetzt.
+              </p>
+              <div className="flex gap-2 justify-end pt-1">
+                <button
+                  onClick={() => setPendingImport(null)}
+                  className="px-4 py-2 text-sm font-semibold text-neutral-500 hover:text-neutral-300"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  onClick={confirmImport}
+                  className="px-4 py-2 text-sm font-bold rounded text-black"
+                  style={{ backgroundColor: ACCENT }}
+                >
+                  Ersetzen
+                </button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function Modal({ onClose, children }) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    // Lock body scroll
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+  return (
+    <div
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 max-w-sm w-full space-y-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
     </div>
   );
 }
