@@ -266,11 +266,16 @@ function Overview({ total, count, avg, top10 }) {
         {top10.length > 0 ? (
           <ol className="divide-y divide-neutral-900">
             {top10.map((t, i) => (
-              <li key={t.id} className="flex items-baseline gap-4 py-3">
+              <li key={t.id} className="flex items-center gap-4 py-3">
                 <span className="mono text-xs text-neutral-600 w-6 text-right tabular-nums">
                   {String(i + 1).padStart(2, '0')}
                 </span>
-                <span className="flex-1 truncate text-neutral-200">{t.name}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="truncate text-neutral-200">{t.name}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5">
+                    {t.date || DASH}
+                  </div>
+                </div>
                 <span
                   className="mono text-sm tabular-nums whitespace-nowrap"
                   style={{ color: ACCENT }}
