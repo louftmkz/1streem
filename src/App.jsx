@@ -1,24 +1,82 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 // =============================================================================
-// 1streem — single-file dashboard
-// Data: localStorage. Songs DB editable in-app. Export/Import via clipboard.
+// 1streem — Multi-Platform Stream Aggregator
+// Storage: localStorage (key: 1streem-songs-v2). Auto-migrates from v1.
 // =============================================================================
 
-const ACCENT = '#1DB954';
 const DASH = '—';
-const STORAGE_KEY = '1streem-songs-v1';
+const STORAGE_KEY = '1streem-songs-v2';
+const LEGACY_KEY = '1streem-songs-v1';
 const ARTIST_NAME = import.meta.env.VITE_ARTIST_NAME || 'Lou FTMKZ';
+
+const PLATFORMS = [
+  { id: 'spotify', label: 'Spotify', short: 'Spotify', color: '#1DB954' },
+  { id: 'apple', label: 'Apple Music', short: 'Apple', color: '#A2AAAD' },
+  { id: 'youtube', label: 'YouTube', short: 'YouTube', color: '#FF0000' },
+  { id: 'amazon', label: 'Amazon Music', short: 'Amazon', color: '#46C3D0' },
+];
+const ALL_TAB = { id: 'all', label: 'Alle', short: 'Alle', color: '#fafafa' };
+const TABS = [ALL_TAB, ...PLATFORMS];
+
+const lookupTab = (id) => TABS.find((t) => t.id === id) || ALL_TAB;
+const isPlatform = (id) => PLATFORMS.some((p) => p.id === id);
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+const emptyPlatformBools = () =>
+  PLATFORMS.reduce((o, p) => ({ ...o, [p.id]: true }), {});
+const emptyPlatformNums = () =>
+  PLATFORMS.reduce((o, p) => ({ ...o, [p.id]: 0 }), {});
+
+function migrateSong(s) {
+  if (
+    s &&
+    typeof s === 'object' &&
+    s.streams &&
+    typeof s.streams === 'object' &&
+    s.platforms &&
+    typeof s.platforms === 'object'
+  ) {
+    return {
+      id: s.id || uuid(),
+      name: s.name || '',
+      date: s.date || '',
+      platforms: { ...emptyPlatformBools(), ...s.platforms },
+      streams: { ...emptyPlatformNums(), ...s.streams },
+    };
+  }
+  // Legacy v1: { streams: number } — treat as Spotify only
+  return {
+    id: s?.id || uuid(),
+    name: s?.name || '',
+    date: s?.date || '',
+    platforms: emptyPlatformBools(),
+    streams: {
+      ...emptyPlatformNums(),
+      spotify: Number(s?.streams) || 0,
+    },
+  };
+}
 
 function loadSongs() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
+    const v2 = localStorage.getItem(STORAGE_KEY);
+    if (v2) {
+      const arr = JSON.parse(v2);
+      if (Array.isArray(arr)) return arr.map(migrateSong);
+    }
+  } catch {}
+  try {
+    const v1 = localStorage.getItem(LEGACY_KEY);
+    if (v1) {
+      const arr = JSON.parse(v1);
+      if (Array.isArray(arr)) return arr.map(migrateSong);
+    }
+  } catch {}
+  return [];
 }
 
 function fmt(n) {
@@ -31,23 +89,59 @@ function uuid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
+function songTotal(song) {
+  return PLATFORMS.reduce((sum, p) => {
+    if (!song.platforms?.[p.id]) return sum;
+    return sum + (Number(song.streams?.[p.id]) || 0);
+  }, 0);
+}
+
+// dd.mm.yy(yy) date helpers --------------------------------------------------
+function formatDateInput(raw) {
+  const digits = (raw || '').replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
+}
+function parseDateInput(input) {
+  if (!input) return '';
+  const m = input.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/);
+  if (!m) return null;
+  let [, dd, mm, yy] = m;
+  if (yy.length === 2) yy = `20${yy}`;
+  dd = dd.padStart(2, '0');
+  mm = mm.padStart(2, '0');
+  const d = new Date(`${yy}-${mm}-${dd}T00:00:00Z`);
+  if (isNaN(d.getTime())) return null;
+  if (d.getUTCFullYear() !== Number(yy)) return null;
+  if (d.getUTCMonth() + 1 !== Number(mm)) return null;
+  if (d.getUTCDate() !== Number(dd)) return null;
+  return `${yy}-${mm}-${dd}`;
+}
+
+// =============================================================================
+// Main
+// =============================================================================
+
 export default function App() {
   const [songs, setSongs] = useState(loadSongs);
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [pendingImport, setPendingImport] = useState(null);
   const fileInputRef = useRef(null);
 
-  // Persist on every change
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(songs));
     } catch {}
   }, [songs]);
 
-  // Sort by release date — newest first; empty dates sink to bottom
+  const activeTab = lookupTab(tab);
+  const accent = activeTab.color;
+
+  // Sorted, filtered
   const sortedByDate = useMemo(
     () =>
       [...songs].sort((a, b) => {
@@ -58,36 +152,92 @@ export default function App() {
     [songs],
   );
 
-  const filtered = useMemo(() => {
+  const filteredForList = useMemo(() => {
+    let list = sortedByDate;
+    if (isPlatform(tab)) list = list.filter((s) => s.platforms?.[tab]);
     const q = search.trim().toLowerCase();
-    if (!q) return sortedByDate;
-    return sortedByDate.filter((s) => s.name.toLowerCase().includes(q));
-  }, [sortedByDate, search]);
+    if (q) list = list.filter((s) => s.name.toLowerCase().includes(q));
+    return list;
+  }, [sortedByDate, search, tab]);
 
-  const totalStreams = songs.reduce((s, x) => s + (Number(x.streams) || 0), 0);
-  const songCount = songs.length;
-  const avg = songCount ? Math.round(totalStreams / songCount) : null;
-  const top10 = useMemo(
-    () =>
-      [...songs]
-        .sort((a, b) => (Number(b.streams) || 0) - (Number(a.streams) || 0))
-        .slice(0, 10),
-    [songs],
-  );
+  // Metrics
+  const { totalStreams, songCount, avg, top10, heroLabel } = useMemo(() => {
+    if (tab === 'all') {
+      const total = songs.reduce((s, x) => s + songTotal(x), 0);
+      const top = [...songs]
+        .map((s) => ({ ...s, _val: songTotal(s) }))
+        .filter((s) => s._val > 0)
+        .sort((a, b) => b._val - a._val)
+        .slice(0, 10);
+      return {
+        totalStreams: total,
+        songCount: songs.length,
+        avg: songs.length ? Math.round(total / songs.length) : null,
+        top10: top,
+        heroLabel: 'Total Streams · Alle Plattformen',
+      };
+    }
+    const enabled = songs.filter((s) => s.platforms?.[tab]);
+    const total = enabled.reduce(
+      (s, x) => s + (Number(x.streams?.[tab]) || 0),
+      0,
+    );
+    const top = enabled
+      .map((s) => ({ ...s, _val: Number(s.streams?.[tab]) || 0 }))
+      .filter((s) => s._val > 0)
+      .sort((a, b) => b._val - a._val)
+      .slice(0, 10);
+    return {
+      totalStreams: total,
+      songCount: enabled.length,
+      avg: enabled.length ? Math.round(total / enabled.length) : null,
+      top10: top,
+      heroLabel: `Total Streams · ${activeTab.label}`,
+    };
+  }, [tab, songs, activeTab.label]);
 
   // Mutators
-  const addSong = ({ name, date, streams }) => {
+  const addSong = ({ name, date }) => {
     if (!name?.trim()) return;
     setSongs((s) => [
       ...s,
-      { id: uuid(), name: name.trim(), date: date || '', streams: Number(streams) || 0 },
+      {
+        id: uuid(),
+        name: name.trim(),
+        date: date || '',
+        platforms: emptyPlatformBools(),
+        streams: emptyPlatformNums(),
+      },
     ]);
     setShowAdd(false);
   };
 
-  const setStreams = (id, value) => {
-    setSongs((s) =>
-      s.map((x) => (x.id === id ? { ...x, streams: Number(value) || 0 } : x)),
+  const setPlatformStreams = (id, platformId, value) => {
+    setSongs((all) =>
+      all.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              streams: { ...s.streams, [platformId]: Number(value) || 0 },
+            }
+          : s,
+      ),
+    );
+  };
+
+  const togglePlatform = (id, platformId) => {
+    setSongs((all) =>
+      all.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              platforms: {
+                ...s.platforms,
+                [platformId]: !s.platforms[platformId],
+              },
+            }
+          : s,
+      ),
     );
   };
 
@@ -98,14 +248,17 @@ export default function App() {
   };
 
   const nextEditableId = (currentId) => {
-    const idx = filtered.findIndex((s) => s.id === currentId);
-    return idx >= 0 && idx + 1 < filtered.length ? filtered[idx + 1].id : null;
+    const idx = filteredForList.findIndex((s) => s.id === currentId);
+    return idx >= 0 && idx + 1 < filteredForList.length
+      ? filteredForList[idx + 1].id
+      : null;
   };
 
-  // Backup → JSON-Datei downloaden
+  // Backup / restore
   const downloadBackup = () => {
     const payload = {
       app: '1streem',
+      version: 2,
       artist: ARTIST_NAME,
       exportedAt: new Date().toISOString(),
       songs,
@@ -124,9 +277,7 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  // Wiederherstellen → File-Picker
   const pickRestoreFile = () => fileInputRef.current?.click();
-
   const handleFileSelect = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -142,22 +293,18 @@ export default function App() {
       if (!rawSongs) throw new Error('Datei enthält keine Songs.');
       const cleaned = rawSongs
         .filter((x) => x && typeof x.name === 'string')
-        .map((x) => ({
-          id: x.id || uuid(),
-          name: x.name,
-          date: x.date || '',
-          streams: Number(x.streams) || 0,
-        }));
+        .map(migrateSong);
       setPendingImport({ songs: cleaned, fileName: file.name });
     } catch (err) {
       setPendingImport({ error: err.message || 'Datei nicht lesbar.' });
     }
   };
-
   const confirmImport = () => {
     if (pendingImport?.songs) setSongs(pendingImport.songs);
     setPendingImport(null);
   };
+
+  // ---------------------------------------------------------------------------
 
   return (
     <div
@@ -167,10 +314,11 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
         .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
-        /* Hide default number-input spinners */
         input[type=number]::-webkit-inner-spin-button,
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
         input[type=number] { -moz-appearance: textfield; }
+        .tabs-scroll::-webkit-scrollbar { display: none; }
+        .tabs-scroll { scrollbar-width: none; }
       `}</style>
 
       {/* Header */}
@@ -184,35 +332,141 @@ export default function App() {
         </div>
       </header>
 
-      {/* Tabs */}
-      <nav className="border-b border-neutral-900 bg-[#0a0a0a]">
-        <div className="max-w-3xl mx-auto px-6 flex gap-6">
-          <TabBtn label="Übersicht" active={tab === 'overview'} onClick={() => setTab('overview')} />
-          <TabBtn label="Songs" active={tab === 'songs'} onClick={() => setTab('songs')} />
-        </div>
-      </nav>
+      {/* Top-tabs */}
+      <TabBar tabs={TABS} active={tab} onSelect={setTab} />
 
-      <main className="max-w-3xl mx-auto px-6 py-10">
-        {tab === 'overview' ? (
-          <Overview total={totalStreams} count={songCount} avg={avg} top10={top10} />
-        ) : (
-          <SongsView
-            songs={filtered}
-            search={search}
-            setSearch={setSearch}
-            editingId={editingId}
-            setEditingId={setEditingId}
-            setStreams={setStreams}
-            nextEditableId={nextEditableId}
-            showAdd={showAdd}
-            setShowAdd={setShowAdd}
-            onAdd={addSong}
-            onDelete={deleteSong}
-          />
-        )}
+      <main className="max-w-3xl mx-auto px-6 py-10 space-y-16">
+        {/* Hero */}
+        <section>
+          <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
+            {heroLabel}
+          </p>
+          <p
+            className="mono font-bold tracking-tight tabular-nums leading-none"
+            style={{
+              color: totalStreams > 0 ? accent : '#404040',
+              fontSize: 'clamp(3rem, 12vw, 7rem)',
+            }}
+          >
+            {fmt(totalStreams)}
+          </p>
+        </section>
+
+        {/* Secondary stats */}
+        <section className="grid grid-cols-2 gap-8 border-t border-neutral-900 pt-10">
+          <Stat label="Songs" value={fmt(songCount)} />
+          <Stat label="Ø pro Song" value={fmt(avg)} />
+        </section>
+
+        {/* Top 10 */}
+        <section>
+          <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-6">
+            Top 10 · All Time High
+          </p>
+          {top10.length > 0 ? (
+            <ol className="divide-y divide-neutral-900">
+              {top10.map((t, i) => (
+                <li key={t.id} className="flex items-center gap-4 py-3">
+                  <span className="mono text-xs text-neutral-600 w-6 text-right tabular-nums">
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-neutral-200">{t.name}</div>
+                    <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5">
+                      {t.date || DASH}
+                    </div>
+                  </div>
+                  <span
+                    className="mono text-sm tabular-nums whitespace-nowrap"
+                    style={{ color: accent }}
+                  >
+                    {fmt(t._val)}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="text-neutral-700 text-sm">{DASH}</p>
+          )}
+        </section>
+
+        {/* Catalog / Platform songs */}
+        <section>
+          <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
+            {tab === 'all' ? 'Katalog' : `Songs auf ${activeTab.label}`}
+          </p>
+
+          <div className="flex items-center gap-3 mb-4 sticky top-0 bg-[#0a0a0a] py-2 z-10">
+            <input
+              type="search"
+              placeholder="Suche..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-3 py-2 placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
+              style={{ fontSize: '16px' }}
+            />
+            {tab === 'all' && (
+              <button
+                onClick={() => setShowAdd(!showAdd)}
+                className="px-4 py-2 rounded font-bold text-sm text-black whitespace-nowrap"
+                style={{ backgroundColor: accent }}
+              >
+                {showAdd ? '× Abbrechen' : '+ Song'}
+              </button>
+            )}
+          </div>
+
+          {tab === 'all' && showAdd && (
+            <div className="mb-4">
+              <AddForm
+                accent={accent}
+                onSave={addSong}
+                onCancel={() => setShowAdd(false)}
+              />
+            </div>
+          )}
+
+          {filteredForList.length === 0 ? (
+            <p className="text-neutral-700 text-sm py-12 text-center">
+              {search
+                ? 'Keine Treffer.'
+                : tab === 'all'
+                  ? 'Noch keine Songs. Tap auf + um den ersten hinzuzufügen.'
+                  : `Keine Songs auf ${activeTab.label} aktiviert. Wechsel zu "Alle" und aktivier die Plattform pro Song.`}
+            </p>
+          ) : tab === 'all' ? (
+            <ul className="divide-y divide-neutral-900">
+              {filteredForList.map((song) => (
+                <CatalogRow
+                  key={song.id}
+                  song={song}
+                  onTogglePlatform={(pid) => togglePlatform(song.id, pid)}
+                  onDelete={() => deleteSong(song.id)}
+                />
+              ))}
+            </ul>
+          ) : (
+            <ul className="divide-y divide-neutral-900">
+              {filteredForList.map((song) => (
+                <PlatformRow
+                  key={song.id}
+                  song={song}
+                  platformId={tab}
+                  accent={accent}
+                  editing={editingId === song.id}
+                  onEdit={() => setEditingId(song.id)}
+                  onSave={(v) => setPlatformStreams(song.id, tab, v)}
+                  onCancel={() => setEditingId(null)}
+                  onNext={() => setEditingId(nextEditableId(song.id))}
+                  onDelete={() => deleteSong(song.id)}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
       </main>
 
-      {/* Footer: Backup/Restore */}
+      {/* Footer */}
       <footer
         className="border-t border-neutral-900 mt-8"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
@@ -231,7 +485,7 @@ export default function App() {
             Wiederherstellen
           </button>
           <span className="text-neutral-700 ml-auto mono tabular-nums">
-            {songCount} {songCount === 1 ? 'Song' : 'Songs'}
+            {songs.length} {songs.length === 1 ? 'Song' : 'Songs'}
           </span>
         </div>
       </footer>
@@ -251,14 +505,12 @@ export default function App() {
               <h3 className="text-base font-bold text-neutral-100">
                 Datei nicht lesbar
               </h3>
-              <p className="text-sm text-neutral-400">
-                {pendingImport.error}
-              </p>
+              <p className="text-sm text-neutral-400">{pendingImport.error}</p>
               <div className="flex justify-end pt-1">
                 <button
                   onClick={() => setPendingImport(null)}
                   className="px-4 py-2 text-sm font-bold rounded text-black"
-                  style={{ backgroundColor: ACCENT }}
+                  style={{ backgroundColor: accent }}
                 >
                   OK
                 </button>
@@ -277,11 +529,11 @@ export default function App() {
                 <span className="mono text-neutral-200 tabular-nums">
                   {pendingImport.songs.length}
                 </span>{' '}
-                Songs. Deine aktuellen{' '}
+                Songs. Aktuelle{' '}
                 <span className="mono text-neutral-200 tabular-nums">
-                  {songCount}
+                  {songs.length}
                 </span>{' '}
-                Songs werden ersetzt.
+                werden ersetzt.
               </p>
               <div className="flex gap-2 justify-end pt-1">
                 <button
@@ -293,7 +545,7 @@ export default function App() {
                 <button
                   onClick={confirmImport}
                   className="px-4 py-2 text-sm font-bold rounded text-black"
-                  style={{ backgroundColor: ACCENT }}
+                  style={{ backgroundColor: accent }}
                 >
                   Ersetzen
                 </button>
@@ -306,106 +558,55 @@ export default function App() {
   );
 }
 
-function Modal({ onClose, children }) {
+// =============================================================================
+// Sub-components
+// =============================================================================
+
+function TabBar({ tabs, active, onSelect }) {
+  const containerRef = useRef(null);
+  const activeRef = useRef(null);
+
   useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    // Lock body scroll
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [onClose]);
-  return (
-    <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50"
-      onClick={onClose}
-    >
-      <div
-        className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 max-w-sm w-full space-y-4 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
+    if (activeRef.current && containerRef.current) {
+      const el = activeRef.current;
+      const container = containerRef.current;
+      const elLeft = el.offsetLeft;
+      const elRight = elLeft + el.offsetWidth;
+      const visLeft = container.scrollLeft;
+      const visRight = visLeft + container.offsetWidth;
+      if (elLeft < visLeft || elRight > visRight) {
+        container.scrollTo({
+          left: elLeft - container.offsetWidth / 2 + el.offsetWidth / 2,
+          behavior: 'smooth',
+        });
+      }
+    }
+  }, [active]);
 
-// ----------------------------------------------------------------------------
-function TabBtn({ label, active, onClick }) {
   return (
-    <button
-      onClick={onClick}
-      className="py-4 text-sm font-semibold tracking-tight border-b-2 -mb-px transition-colors"
-      style={{
-        color: active ? ACCENT : '#737373',
-        borderColor: active ? ACCENT : 'transparent',
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-// ----------------------------------------------------------------------------
-function Overview({ total, count, avg, top10 }) {
-  return (
-    <div className="space-y-16">
-      <section>
-        <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
-          Total Streams · Spotify · All Time
-        </p>
-        <p
-          className="mono font-bold tracking-tight tabular-nums leading-none"
-          style={{
-            color: total > 0 ? ACCENT : '#404040',
-            fontSize: 'clamp(3rem, 12vw, 7rem)',
-          }}
+    <nav className="border-b border-neutral-900 bg-[#0a0a0a] sticky top-0 z-20">
+      <div className="max-w-3xl mx-auto">
+        <div
+          ref={containerRef}
+          className="tabs-scroll flex gap-1 overflow-x-auto px-6"
         >
-          {fmt(total)}
-        </p>
-      </section>
-
-      <section className="grid grid-cols-2 gap-8 border-t border-neutral-900 pt-10">
-        <Stat label="Songs" value={fmt(count)} />
-        <Stat label="Ø pro Song" value={fmt(avg)} />
-      </section>
-
-      <section>
-        <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-6">
-          Top 10 · All Time High
-        </p>
-        {top10.length > 0 ? (
-          <ol className="divide-y divide-neutral-900">
-            {top10.map((t, i) => (
-              <li key={t.id} className="flex items-center gap-4 py-3">
-                <span className="mono text-xs text-neutral-600 w-6 text-right tabular-nums">
-                  {String(i + 1).padStart(2, '0')}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="truncate text-neutral-200">{t.name}</div>
-                  <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5">
-                    {t.date || DASH}
-                  </div>
-                </div>
-                <span
-                  className="mono text-sm tabular-nums whitespace-nowrap"
-                  style={{ color: ACCENT }}
-                >
-                  {fmt(t.streams)}
-                </span>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="text-neutral-700 text-sm">{DASH}</p>
-        )}
-      </section>
-    </div>
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              ref={t.id === active ? activeRef : null}
+              onClick={() => onSelect(t.id)}
+              className="py-4 px-2 text-sm font-semibold tracking-tight border-b-2 -mb-px transition-colors whitespace-nowrap"
+              style={{
+                color: t.id === active ? t.color : '#737373',
+                borderColor: t.id === active ? t.color : 'transparent',
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </nav>
   );
 }
 
@@ -420,69 +621,66 @@ function Stat({ label, value }) {
   );
 }
 
-// ----------------------------------------------------------------------------
-function SongsView({
-  songs,
-  search,
-  setSearch,
-  editingId,
-  setEditingId,
-  setStreams,
-  nextEditableId,
-  showAdd,
-  setShowAdd,
-  onAdd,
-  onDelete,
-}) {
+// In ALL tab: catalog management. No inline stream editing. Platform pills.
+function CatalogRow({ song, onTogglePlatform, onDelete }) {
+  const total = songTotal(song);
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3 sticky top-0 bg-[#0a0a0a] pt-2 pb-3 z-10">
-        <input
-          type="search"
-          placeholder="Suche..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-base placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
-          style={{ fontSize: '16px' }}
-        />
-        <button
-          onClick={() => setShowAdd(!showAdd)}
-          className="px-4 py-2 rounded font-bold text-sm text-black whitespace-nowrap"
-          style={{ backgroundColor: ACCENT }}
-        >
-          {showAdd ? '× Abbrechen' : '+ Song'}
-        </button>
+    <li className="py-3">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-neutral-200 truncate">{song.name}</div>
+          <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5">
+            {song.date || DASH}
+          </div>
+          <div className="flex flex-wrap gap-1 mt-2">
+            {PLATFORMS.map((p) => {
+              const enabled = !!song.platforms?.[p.id];
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => onTogglePlatform(p.id)}
+                  className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider transition-colors"
+                  style={{
+                    backgroundColor: enabled ? p.color : 'transparent',
+                    color: enabled ? '#0a0a0a' : '#525252',
+                    border: `1px solid ${enabled ? p.color : '#262626'}`,
+                  }}
+                >
+                  {p.short}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="mono text-sm tabular-nums text-right text-neutral-100 min-w-[5.5rem]">
+            {total > 0 ? fmt(total) : DASH}
+          </div>
+          <button
+            onClick={onDelete}
+            className="text-neutral-700 hover:text-red-500 text-lg leading-none px-2 py-1"
+            aria-label="Löschen"
+          >
+            ×
+          </button>
+        </div>
       </div>
-
-      {showAdd && <AddForm onSave={onAdd} onCancel={() => setShowAdd(false)} />}
-
-      {songs.length === 0 ? (
-        <p className="text-neutral-700 text-sm py-12 text-center">
-          {search
-            ? 'Keine Treffer.'
-            : 'Noch keine Songs. Tap auf + um den ersten hinzuzufügen.'}
-        </p>
-      ) : (
-        <ul className="divide-y divide-neutral-900">
-          {songs.map((song) => (
-            <Row
-              key={song.id}
-              song={song}
-              editing={editingId === song.id}
-              onEdit={() => setEditingId(song.id)}
-              onSave={(v) => setStreams(song.id, v)}
-              onCancel={() => setEditingId(null)}
-              onNext={() => setEditingId(nextEditableId(song.id))}
-              onDelete={() => onDelete(song.id)}
-            />
-          ))}
-        </ul>
-      )}
-    </div>
+    </li>
   );
 }
 
-function Row({ song, editing, onEdit, onSave, onCancel, onNext, onDelete }) {
+// In platform tabs: tap to edit streams for that platform.
+function PlatformRow({
+  song,
+  platformId,
+  accent,
+  editing,
+  onEdit,
+  onSave,
+  onCancel,
+  onNext,
+  onDelete,
+}) {
   const inputRef = useRef(null);
   const skipBlurRef = useRef(false);
 
@@ -490,10 +688,11 @@ function Row({ song, editing, onEdit, onSave, onCancel, onNext, onDelete }) {
     if (editing && inputRef.current) {
       inputRef.current.focus();
       inputRef.current.select();
-      // Scroll the row into view on mobile so the keyboard doesn't cover it
       inputRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
   }, [editing]);
+
+  const value = Number(song.streams?.[platformId]) || 0;
 
   return (
     <li className="flex items-center gap-3 py-3">
@@ -508,7 +707,7 @@ function Row({ song, editing, onEdit, onSave, onCancel, onNext, onDelete }) {
           ref={inputRef}
           type="number"
           inputMode="numeric"
-          defaultValue={song.streams || ''}
+          defaultValue={value || ''}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
@@ -530,15 +729,15 @@ function Row({ song, editing, onEdit, onSave, onCancel, onNext, onDelete }) {
             onCancel();
           }}
           className="mono w-32 text-right bg-neutral-900 border rounded px-2 py-1 tabular-nums focus:outline-none"
-          style={{ borderColor: ACCENT, fontSize: '16px' }}
+          style={{ borderColor: accent, fontSize: '16px' }}
         />
       ) : (
         <button
           onClick={onEdit}
           className="mono w-32 text-right tabular-nums text-sm py-1 px-2 rounded hover:bg-neutral-900 transition-colors"
-          style={{ color: song.streams > 0 ? ACCENT : '#525252' }}
+          style={{ color: value > 0 ? accent : '#525252' }}
         >
-          {song.streams > 0 ? fmt(song.streams) : DASH}
+          {value > 0 ? fmt(value) : DASH}
         </button>
       )}
       <button
@@ -552,37 +751,16 @@ function Row({ song, editing, onEdit, onSave, onCancel, onNext, onDelete }) {
   );
 }
 
-// ----------------------------------------------------------------------------
-// dd.mm.yy oder dd.mm.yyyy live-formatieren während des Tippens
-function formatDateInput(raw) {
-  const digits = (raw || '').replace(/\D/g, '').slice(0, 8);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
-  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
-}
-
-// dd.mm.yy(yy) → ISO yyyy-mm-dd. Gibt null bei ungültigem Datum.
-function parseDateInput(input) {
-  if (!input) return '';
-  const m = input.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/);
-  if (!m) return null;
-  let [, dd, mm, yy] = m;
-  if (yy.length === 2) yy = `20${yy}`;
-  dd = dd.padStart(2, '0');
-  mm = mm.padStart(2, '0');
-  const d = new Date(`${yy}-${mm}-${dd}T00:00:00Z`);
-  if (isNaN(d.getTime())) return null;
-  if (d.getUTCFullYear() !== Number(yy)) return null;
-  if (d.getUTCMonth() + 1 !== Number(mm)) return null;
-  if (d.getUTCDate() !== Number(dd)) return null;
-  return `${yy}-${mm}-${dd}`;
-}
-
-function AddForm({ onSave, onCancel }) {
+function AddForm({ accent, onSave, onCancel }) {
   const [name, setName] = useState('');
   const [dateInput, setDateInput] = useState('');
-  const [streams, setStreams] = useState('');
   const [dateErr, setDateErr] = useState(false);
+
+  const inputStyle = { fontSize: '16px' };
+  const inputClass =
+    'w-full bg-[#0a0a0a] border border-neutral-800 rounded px-3 py-3 text-base focus:outline-none focus:border-neutral-700';
+  const labelClass =
+    'block text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-2';
 
   const submit = (e) => {
     e?.preventDefault();
@@ -596,14 +774,8 @@ function AddForm({ onSave, onCancel }) {
       }
       isoDate = parsed;
     }
-    onSave({ name, date: isoDate, streams });
+    onSave({ name, date: isoDate });
   };
-
-  const inputStyle = { fontSize: '16px' };
-  const inputClass =
-    'w-full bg-[#0a0a0a] border border-neutral-800 rounded px-3 py-3 text-base focus:outline-none focus:border-neutral-700';
-  const labelClass =
-    'block text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-2';
 
   return (
     <form
@@ -622,41 +794,29 @@ function AddForm({ onSave, onCancel }) {
           style={inputStyle}
         />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={labelClass}>Release</label>
-          <input
-            type="text"
-            inputMode="numeric"
-            placeholder="dd.mm.yy"
-            value={dateInput}
-            onChange={(e) => {
-              setDateInput(formatDateInput(e.target.value));
-              setDateErr(false);
-            }}
-            maxLength={10}
-            className={inputClass + ' mono tabular-nums'}
-            style={{
-              ...inputStyle,
-              borderColor: dateErr ? '#ef4444' : undefined,
-            }}
-          />
-          {dateErr && (
-            <p className="text-xs text-red-400 mt-1">Ungültiges Datum</p>
-          )}
-        </div>
-        <div>
-          <label className={labelClass}>Streams</label>
-          <input
-            type="number"
-            inputMode="numeric"
-            value={streams}
-            onChange={(e) => setStreams(e.target.value)}
-            className={inputClass + ' mono tabular-nums'}
-            style={inputStyle}
-          />
-        </div>
+      <div>
+        <label className={labelClass}>Release (dd.mm.yy)</label>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="dd.mm.yy"
+          value={dateInput}
+          onChange={(e) => {
+            setDateInput(formatDateInput(e.target.value));
+            setDateErr(false);
+          }}
+          maxLength={10}
+          className={inputClass + ' mono tabular-nums'}
+          style={{ ...inputStyle, borderColor: dateErr ? '#ef4444' : undefined }}
+        />
+        {dateErr && (
+          <p className="text-xs text-red-400 mt-1">Ungültiges Datum</p>
+        )}
       </div>
+      <p className="text-xs text-neutral-600">
+        Alle 4 Plattformen werden default aktiviert. Stream-Zahlen trägst du in
+        den jeweiligen Plattform-Tabs ein.
+      </p>
       <div className="flex gap-2 justify-end pt-1">
         <button
           type="button"
@@ -668,11 +828,39 @@ function AddForm({ onSave, onCancel }) {
         <button
           type="submit"
           className="px-4 py-2 text-sm font-bold rounded text-black"
-          style={{ backgroundColor: ACCENT }}
+          style={{ backgroundColor: accent }}
         >
           Speichern
         </button>
       </div>
     </form>
+  );
+}
+
+function Modal({ onClose, children }) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+  return (
+    <div
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 max-w-sm w-full space-y-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
   );
 }
