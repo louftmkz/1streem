@@ -458,7 +458,6 @@ export default function App() {
                   onSave={(v) => setPlatformStreams(song.id, tab, v)}
                   onCancel={() => setEditingId(null)}
                   onNext={() => setEditingId(nextEditableId(song.id))}
-                  onDelete={() => deleteSong(song.id)}
                 />
               ))}
             </ul>
@@ -670,6 +669,7 @@ function CatalogRow({ song, onTogglePlatform, onDelete }) {
 }
 
 // In platform tabs: tap to edit streams for that platform.
+// No delete here — deletion is a catalog action (Alle tab only).
 function PlatformRow({
   song,
   platformId,
@@ -679,7 +679,6 @@ function PlatformRow({
   onSave,
   onCancel,
   onNext,
-  onDelete,
 }) {
   const inputRef = useRef(null);
   const skipBlurRef = useRef(false);
@@ -740,13 +739,6 @@ function PlatformRow({
           {value > 0 ? fmt(value) : DASH}
         </button>
       )}
-      <button
-        onClick={onDelete}
-        className="text-neutral-700 hover:text-red-500 text-lg leading-none px-2 py-1"
-        aria-label="Löschen"
-      >
-        ×
-      </button>
     </li>
   );
 }
