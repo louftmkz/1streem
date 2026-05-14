@@ -432,15 +432,50 @@ function Row({ song, editing, onEdit, onSave, onCancel, onNext, onDelete }) {
 }
 
 // ----------------------------------------------------------------------------
+// dd.mm.yy oder dd.mm.yyyy live-formatieren während des Tippens
+function formatDateInput(raw) {
+  const digits = (raw || '').replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
+}
+
+// dd.mm.yy(yy) → ISO yyyy-mm-dd. Gibt null bei ungültigem Datum.
+function parseDateInput(input) {
+  if (!input) return '';
+  const m = input.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/);
+  if (!m) return null;
+  let [, dd, mm, yy] = m;
+  if (yy.length === 2) yy = `20${yy}`;
+  dd = dd.padStart(2, '0');
+  mm = mm.padStart(2, '0');
+  const d = new Date(`${yy}-${mm}-${dd}T00:00:00Z`);
+  if (isNaN(d.getTime())) return null;
+  if (d.getUTCFullYear() !== Number(yy)) return null;
+  if (d.getUTCMonth() + 1 !== Number(mm)) return null;
+  if (d.getUTCDate() !== Number(dd)) return null;
+  return `${yy}-${mm}-${dd}`;
+}
+
 function AddForm({ onSave, onCancel }) {
   const [name, setName] = useState('');
-  const [date, setDate] = useState('');
+  const [dateInput, setDateInput] = useState('');
   const [streams, setStreams] = useState('');
+  const [dateErr, setDateErr] = useState(false);
 
   const submit = (e) => {
     e?.preventDefault();
     if (!name.trim()) return;
-    onSave({ name, date, streams });
+    let isoDate = '';
+    if (dateInput.trim()) {
+      const parsed = parseDateInput(dateInput.trim());
+      if (parsed === null) {
+        setDateErr(true);
+        return;
+      }
+      isoDate = parsed;
+    }
+    onSave({ name, date: isoDate, streams });
   };
 
   const inputStyle = { fontSize: '16px' };
@@ -470,12 +505,24 @@ function AddForm({ onSave, onCancel }) {
         <div>
           <label className={labelClass}>Release</label>
           <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className={inputClass}
-            style={inputStyle}
+            type="text"
+            inputMode="numeric"
+            placeholder="dd.mm.yy"
+            value={dateInput}
+            onChange={(e) => {
+              setDateInput(formatDateInput(e.target.value));
+              setDateErr(false);
+            }}
+            maxLength={10}
+            className={inputClass + ' mono tabular-nums'}
+            style={{
+              ...inputStyle,
+              borderColor: dateErr ? '#ef4444' : undefined,
+            }}
           />
+          {dateErr && (
+            <p className="text-xs text-red-400 mt-1">Ungültiges Datum</p>
+          )}
         </div>
         <div>
           <label className={labelClass}>Streams</label>
