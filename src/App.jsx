@@ -1,43 +1,143 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 // =============================================================================
-// 1streem — Spotify Stream Aggregator
-// Single-file dashboard. Shows real Spotify-for-Artists numbers
-// once they're configured (via backend or env vars).
-// Until then: shows "—" everywhere. No mock numbers.
+// 1streem — single-file dashboard
+// Data: localStorage. Songs DB editable in-app. Export/Import via clipboard.
 // =============================================================================
 
-const ACCENT = '#1DB954'; // Spotify green
+const ACCENT = '#1DB954';
 const DASH = '—';
+const STORAGE_KEY = '1streem-songs-v1';
+const ARTIST_NAME = import.meta.env.VITE_ARTIST_NAME || 'Lou FTMKZ';
+
+function loadSongs() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function fmt(n) {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return DASH;
+  return Number(n).toLocaleString('de-DE');
+}
+
+function uuid() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
 
 export default function App() {
-  const [stats, setStats] = useState(null);
-  const [state, setState] = useState('loading'); // loading | empty | ready | error
-  const [errorMsg, setErrorMsg] = useState(null);
+  const [songs, setSongs] = useState(loadSongs);
+  const [tab, setTab] = useState('overview');
+  const [search, setSearch] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
 
+  // Persist on every change
   useEffect(() => {
-    loadStats()
-      .then((s) => {
-        if (s) {
-          setStats(s);
-          setState('ready');
-        } else {
-          setState('empty');
-        }
-      })
-      .catch((e) => {
-        console.error('Stats load failed:', e);
-        setErrorMsg(e.message);
-        setState('error');
-      });
-  }, []);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(songs));
+    } catch {}
+  }, [songs]);
 
-  const total = stats?.totalStreams;
-  const count = stats?.songCount;
-  const avg =
-    Number.isFinite(total) && Number.isFinite(count) && count > 0
-      ? Math.round(total / count)
-      : null;
+  // Sort by release date — newest first; empty dates sink to bottom
+  const sortedByDate = useMemo(
+    () =>
+      [...songs].sort((a, b) => {
+        const da = a.date || '0000-00-00';
+        const db = b.date || '0000-00-00';
+        return db.localeCompare(da);
+      }),
+    [songs],
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return sortedByDate;
+    return sortedByDate.filter((s) => s.name.toLowerCase().includes(q));
+  }, [sortedByDate, search]);
+
+  const totalStreams = songs.reduce((s, x) => s + (Number(x.streams) || 0), 0);
+  const songCount = songs.length;
+  const avg = songCount ? Math.round(totalStreams / songCount) : null;
+  const top10 = useMemo(
+    () =>
+      [...songs]
+        .sort((a, b) => (Number(b.streams) || 0) - (Number(a.streams) || 0))
+        .slice(0, 10),
+    [songs],
+  );
+
+  // Mutators
+  const addSong = ({ name, date, streams }) => {
+    if (!name?.trim()) return;
+    setSongs((s) => [
+      ...s,
+      { id: uuid(), name: name.trim(), date: date || '', streams: Number(streams) || 0 },
+    ]);
+    setShowAdd(false);
+  };
+
+  const setStreams = (id, value) => {
+    setSongs((s) =>
+      s.map((x) => (x.id === id ? { ...x, streams: Number(value) || 0 } : x)),
+    );
+  };
+
+  const deleteSong = (id) => {
+    if (!window.confirm('Song löschen?')) return;
+    setSongs((s) => s.filter((x) => x.id !== id));
+    if (editingId === id) setEditingId(null);
+  };
+
+  const nextEditableId = (currentId) => {
+    const idx = filtered.findIndex((s) => s.id === currentId);
+    return idx >= 0 && idx + 1 < filtered.length ? filtered[idx + 1].id : null;
+  };
+
+  // Export / Import
+  const exportJSON = async () => {
+    const data = JSON.stringify(songs, null, 2);
+    try {
+      await navigator.clipboard.writeText(data);
+      alert(`${songs.length} Songs als JSON in die Zwischenablage kopiert.`);
+    } catch {
+      window.prompt('Manuell kopieren (Cmd+C):', data);
+    }
+  };
+
+  const importJSON = () => {
+    const raw = window.prompt(
+      'JSON hier reinpasten (überschreibt aktuellen Stand):',
+    );
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) throw new Error('Kein Array');
+      const cleaned = parsed
+        .filter((x) => x && typeof x.name === 'string')
+        .map((x) => ({
+          id: x.id || uuid(),
+          name: x.name,
+          date: x.date || '',
+          streams: Number(x.streams) || 0,
+        }));
+      if (
+        !window.confirm(
+          `Import: ${cleaned.length} Songs gefunden. Aktuelle ${songs.length} ersetzen?`,
+        )
+      )
+        return;
+      setSongs(cleaned);
+    } catch (e) {
+      alert('Import fehlgeschlagen: ' + e.message);
+    }
+  };
 
   return (
     <div
@@ -47,265 +147,348 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
         .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+        /* Hide default number-input spinners */
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
       `}</style>
 
-      {/* Header — extends background into iOS status-bar area */}
+      {/* Header */}
       <header
         className="border-b border-neutral-900 bg-[#0a0a0a]"
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
-        <div className="max-w-3xl mx-auto px-6 py-5 flex items-center justify-between">
-          <div className="flex items-baseline gap-3">
-            <span className="text-lg font-bold tracking-tight">1streem</span>
-            {stats?.artistName && (
-              <span className="text-sm text-neutral-500">· {stats.artistName}</span>
-            )}
-          </div>
-          <StatusBadge state={state} source={stats?.source} />
+        <div className="max-w-3xl mx-auto px-6 py-5 flex items-baseline gap-3">
+          <span className="text-lg font-bold tracking-tight">1streem</span>
+          <span className="text-sm text-neutral-500">· {ARTIST_NAME}</span>
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-6 py-16 space-y-20">
-        {/* Hero — Total Streams */}
-        <section>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
-            Total Streams · Spotify · All Time
-          </p>
-          <p
-            className="mono font-bold tracking-tight tabular-nums leading-none"
-            style={{
-              color: stats ? ACCENT : '#404040',
-              fontSize: 'clamp(3rem, 12vw, 7rem)',
-            }}
-          >
-            {fmtNum(total)}
-          </p>
-          {stats?.asOf && (
-            <p className="text-xs text-neutral-600 mt-4">
-              Stand: {stats.asOf}
-            </p>
-          )}
-        </section>
+      {/* Tabs */}
+      <nav className="border-b border-neutral-900 bg-[#0a0a0a]">
+        <div className="max-w-3xl mx-auto px-6 flex gap-6">
+          <TabBtn label="Übersicht" active={tab === 'overview'} onClick={() => setTab('overview')} />
+          <TabBtn label="Songs" active={tab === 'songs'} onClick={() => setTab('songs')} />
+        </div>
+      </nav>
 
-        {/* Secondary stats */}
-        <section className="grid grid-cols-2 md:grid-cols-3 gap-8 border-t border-neutral-900 pt-10">
-          <Stat label="Songs" value={fmtNum(count)} />
-          <Stat label="Ø pro Song" value={fmtNum(avg)} />
-          <Stat
-            label="Quelle"
-            value={stats?.source ? sourceLabel(stats.source) : DASH}
-            small
+      <main className="max-w-3xl mx-auto px-6 py-10">
+        {tab === 'overview' ? (
+          <Overview total={totalStreams} count={songCount} avg={avg} top10={top10} />
+        ) : (
+          <SongsView
+            songs={filtered}
+            search={search}
+            setSearch={setSearch}
+            editingId={editingId}
+            setEditingId={setEditingId}
+            setStreams={setStreams}
+            nextEditableId={nextEditableId}
+            showAdd={showAdd}
+            setShowAdd={setShowAdd}
+            onAdd={addSong}
+            onDelete={deleteSong}
           />
-        </section>
-
-        {/* Top 10 */}
-        <section>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-6">
-            Top 10 · All Time High
-          </p>
-          {stats?.topTracks?.length > 0 ? (
-            <ol className="divide-y divide-neutral-900">
-              {stats.topTracks.slice(0, 10).map((t, i) => (
-                <li
-                  key={`${t.name}-${i}`}
-                  className="flex items-baseline gap-4 py-3"
-                >
-                  <span className="mono text-xs text-neutral-600 w-6 text-right tabular-nums">
-                    {String(i + 1).padStart(2, '0')}
-                  </span>
-                  <span className="flex-1 truncate text-neutral-200">{t.name}</span>
-                  <span
-                    className="mono text-sm tabular-nums whitespace-nowrap"
-                    style={{ color: ACCENT }}
-                  >
-                    {fmtNum(t.streams)}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="text-neutral-700 text-sm">{DASH}</p>
-          )}
-        </section>
+        )}
       </main>
 
+      {/* Footer: Export/Import */}
       <footer
-        className="border-t border-neutral-900 mt-24"
+        className="border-t border-neutral-900 mt-8"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
-        <div className="max-w-3xl mx-auto px-6 py-8 text-xs text-neutral-600 leading-relaxed">
-          {state === 'empty' && <EmptyHint />}
-          {state === 'error' && (
-            <p className="text-red-400">Fehler beim Laden: {errorMsg}</p>
-          )}
-          {state === 'ready' && stats?.source === 'manual' && (
-            <p>
-              Daten manuell gepflegt via Vercel Env Vars · Update durch Anpassen
-              der Vars + Redeploy.
-            </p>
-          )}
-          {state === 'ready' && stats?.source === 'backend' && (
-            <p>Auto-update via Backend-Scraper.</p>
-          )}
+        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-2 text-xs">
+          <button
+            onClick={exportJSON}
+            className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
+          >
+            Export JSON
+          </button>
+          <button
+            onClick={importJSON}
+            className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
+          >
+            Import JSON
+          </button>
+          <span className="text-neutral-700 ml-auto mono tabular-nums">
+            {songCount} {songCount === 1 ? 'Song' : 'Songs'}
+          </span>
         </div>
       </footer>
     </div>
   );
 }
 
-// -----------------------------------------------------------------------------
-// Subcomponents
-// -----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+function TabBtn({ label, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="py-4 text-sm font-semibold tracking-tight border-b-2 -mb-px transition-colors"
+      style={{
+        color: active ? ACCENT : '#737373',
+        borderColor: active ? ACCENT : 'transparent',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
 
-function Stat({ label, value, small = false }) {
+// ----------------------------------------------------------------------------
+function Overview({ total, count, avg, top10 }) {
+  return (
+    <div className="space-y-16">
+      <section>
+        <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
+          Total Streams · Spotify · All Time
+        </p>
+        <p
+          className="mono font-bold tracking-tight tabular-nums leading-none"
+          style={{
+            color: total > 0 ? ACCENT : '#404040',
+            fontSize: 'clamp(3rem, 12vw, 7rem)',
+          }}
+        >
+          {fmt(total)}
+        </p>
+      </section>
+
+      <section className="grid grid-cols-2 gap-8 border-t border-neutral-900 pt-10">
+        <Stat label="Songs" value={fmt(count)} />
+        <Stat label="Ø pro Song" value={fmt(avg)} />
+      </section>
+
+      <section>
+        <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-6">
+          Top 10 · All Time High
+        </p>
+        {top10.length > 0 ? (
+          <ol className="divide-y divide-neutral-900">
+            {top10.map((t, i) => (
+              <li key={t.id} className="flex items-baseline gap-4 py-3">
+                <span className="mono text-xs text-neutral-600 w-6 text-right tabular-nums">
+                  {String(i + 1).padStart(2, '0')}
+                </span>
+                <span className="flex-1 truncate text-neutral-200">{t.name}</span>
+                <span
+                  className="mono text-sm tabular-nums whitespace-nowrap"
+                  style={{ color: ACCENT }}
+                >
+                  {fmt(t.streams)}
+                </span>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="text-neutral-700 text-sm">{DASH}</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Stat({ label, value }) {
   return (
     <div>
       <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-2">
         {label}
       </p>
-      <p
-        className={
-          small
-            ? 'text-sm text-neutral-300'
-            : 'mono text-2xl font-bold tabular-nums text-neutral-100'
-        }
+      <p className="mono text-2xl font-bold tabular-nums text-neutral-100">{value}</p>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+function SongsView({
+  songs,
+  search,
+  setSearch,
+  editingId,
+  setEditingId,
+  setStreams,
+  nextEditableId,
+  showAdd,
+  setShowAdd,
+  onAdd,
+  onDelete,
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 sticky top-0 bg-[#0a0a0a] pt-2 pb-3 z-10">
+        <input
+          type="search"
+          placeholder="Suche..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
+        />
+        <button
+          onClick={() => setShowAdd(!showAdd)}
+          className="px-4 py-2 rounded font-bold text-sm text-black whitespace-nowrap"
+          style={{ backgroundColor: ACCENT }}
+        >
+          {showAdd ? '× Abbrechen' : '+ Song'}
+        </button>
+      </div>
+
+      {showAdd && <AddForm onSave={onAdd} onCancel={() => setShowAdd(false)} />}
+
+      {songs.length === 0 ? (
+        <p className="text-neutral-700 text-sm py-12 text-center">
+          {search
+            ? 'Keine Treffer.'
+            : 'Noch keine Songs. Tap auf + um den ersten hinzuzufügen.'}
+        </p>
+      ) : (
+        <ul className="divide-y divide-neutral-900">
+          {songs.map((song) => (
+            <Row
+              key={song.id}
+              song={song}
+              editing={editingId === song.id}
+              onEdit={() => setEditingId(song.id)}
+              onSave={(v) => setStreams(song.id, v)}
+              onCancel={() => setEditingId(null)}
+              onNext={() => setEditingId(nextEditableId(song.id))}
+              onDelete={() => onDelete(song.id)}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Row({ song, editing, onEdit, onSave, onCancel, onNext, onDelete }) {
+  const inputRef = useRef(null);
+  const skipBlurRef = useRef(false);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+      // Scroll the row into view on mobile so the keyboard doesn't cover it
+      inputRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }, [editing]);
+
+  return (
+    <li className="flex items-center gap-3 py-3">
+      <div className="flex-1 min-w-0">
+        <div className="text-neutral-200 truncate">{song.name}</div>
+        <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5">
+          {song.date || DASH}
+        </div>
+      </div>
+      {editing ? (
+        <input
+          ref={inputRef}
+          type="number"
+          inputMode="numeric"
+          defaultValue={song.streams || ''}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              skipBlurRef.current = true;
+              onSave(e.currentTarget.value);
+              onNext();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              skipBlurRef.current = true;
+              onCancel();
+            }
+          }}
+          onBlur={(e) => {
+            if (skipBlurRef.current) {
+              skipBlurRef.current = false;
+              return;
+            }
+            onSave(e.currentTarget.value);
+            onCancel();
+          }}
+          className="mono w-32 text-right bg-neutral-900 border border-neutral-700 rounded px-2 py-1 tabular-nums focus:outline-none"
+          style={{ borderColor: ACCENT }}
+        />
+      ) : (
+        <button
+          onClick={onEdit}
+          className="mono w-32 text-right tabular-nums text-sm py-1 px-2 rounded hover:bg-neutral-900 transition-colors"
+          style={{ color: song.streams > 0 ? ACCENT : '#525252' }}
+        >
+          {song.streams > 0 ? fmt(song.streams) : DASH}
+        </button>
+      )}
+      <button
+        onClick={onDelete}
+        className="text-neutral-700 hover:text-red-500 text-lg leading-none px-2 py-1"
+        aria-label="Löschen"
       >
-        {value}
-      </p>
-    </div>
+        ×
+      </button>
+    </li>
   );
 }
 
-function StatusBadge({ state, source }) {
-  if (state === 'loading') {
-    return <span className="text-xs text-neutral-600">laden...</span>;
-  }
-  if (state === 'empty') {
-    return (
-      <span className="text-xs text-neutral-500 flex items-center gap-2">
-        <span className="w-1.5 h-1.5 rounded-full bg-neutral-600" />
-        kein data
-      </span>
-    );
-  }
-  if (state === 'error') {
-    return (
-      <span className="text-xs text-red-400 flex items-center gap-2">
-        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-        error
-      </span>
-    );
-  }
+// ----------------------------------------------------------------------------
+function AddForm({ onSave, onCancel }) {
+  const [name, setName] = useState('');
+  const [date, setDate] = useState('');
+  const [streams, setStreams] = useState('');
+
+  const submit = (e) => {
+    e?.preventDefault();
+    if (!name.trim()) return;
+    onSave({ name, date, streams });
+  };
+
   return (
-    <span className="text-xs flex items-center gap-2" style={{ color: ACCENT }}>
-      <span
-        className="w-1.5 h-1.5 rounded-full"
-        style={{ backgroundColor: ACCENT, boxShadow: `0 0 8px ${ACCENT}` }}
+    <form
+      onSubmit={submit}
+      className="bg-neutral-900/40 border border-neutral-800 rounded p-4 space-y-3"
+    >
+      <input
+        type="text"
+        placeholder="Songname"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        autoFocus
+        required
+        className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-neutral-700"
       />
-      live · {sourceLabel(source)}
-    </span>
+      <div className="grid grid-cols-2 gap-3">
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          aria-label="Release-Datum"
+          className="bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-neutral-700"
+        />
+        <input
+          type="number"
+          inputMode="numeric"
+          placeholder="Streams"
+          value={streams}
+          onChange={(e) => setStreams(e.target.value)}
+          className="bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-sm focus:outline-none focus:border-neutral-700"
+        />
+      </div>
+      <div className="flex gap-2 justify-end">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-3 py-1.5 text-sm text-neutral-500"
+        >
+          Abbrechen
+        </button>
+        <button
+          type="submit"
+          className="px-3 py-1.5 text-sm font-bold rounded text-black"
+          style={{ backgroundColor: ACCENT }}
+        >
+          Speichern
+        </button>
+      </div>
+    </form>
   );
-}
-
-function EmptyHint() {
-  return (
-    <div className="space-y-3">
-      <p className="text-neutral-400">Noch keine Daten konfiguriert.</p>
-      <p>
-        Setze Vercel Env Vars für manuelle Eingabe (Phase 1) — oder{' '}
-        <code className="bg-neutral-900 px-1.5 py-0.5 rounded text-neutral-300">
-          VITE_BACKEND_URL
-        </code>{' '}
-        wenn der S4A-Scraper läuft (Phase 2).
-      </p>
-      <p className="text-neutral-600">Siehe README für die Var-Liste.</p>
-    </div>
-  );
-}
-
-// -----------------------------------------------------------------------------
-// Data loading — backend first, then manual env vars, else null
-// -----------------------------------------------------------------------------
-
-async function loadStats() {
-  // Primary: stats.json from the GitHub-Actions scraper (committed daily)
-  try {
-    const res = await fetch(`/stats.json?t=${Date.now()}`); // bust cache
-    if (res.ok) {
-      const data = await res.json();
-      // The scraper writes the same shape we already use, plus a fetchedAt
-      return {
-        artistName: data.artistName,
-        songCount: data.songCount,
-        totalStreams: data.totalStreams,
-        topTracks: data.topTracks || [],
-        asOf: data.asOf,
-        source: 'auto',
-      };
-    }
-  } catch (e) {
-    console.warn('stats.json not available yet:', e.message);
-  }
-
-  // Optional: external backend (only if VITE_BACKEND_URL is set)
-  const backendUrl = import.meta.env.VITE_BACKEND_URL;
-  if (backendUrl) {
-    try {
-      const res = await fetch(`${backendUrl.replace(/\/$/, '')}/api/stats`);
-      if (res.ok) {
-        const data = await res.json();
-        return { ...data, source: 'backend' };
-      }
-      console.warn('Backend responded with', res.status);
-    } catch (e) {
-      console.warn('Backend unreachable, falling back to manual:', e.message);
-    }
-  }
-
-  // Fallback: manual via env vars
-  const total = parseNum(import.meta.env.VITE_TOTAL_STREAMS);
-  const count = parseNum(import.meta.env.VITE_SONG_COUNT);
-  let topTracks = [];
-  try {
-    const raw = import.meta.env.VITE_TOP_TRACKS_JSON;
-    if (raw) topTracks = JSON.parse(raw);
-  } catch (e) {
-    console.warn('VITE_TOP_TRACKS_JSON parse error:', e.message);
-  }
-
-  const hasAny =
-    Number.isFinite(total) || Number.isFinite(count) || topTracks.length > 0;
-  if (hasAny) {
-    return {
-      artistName: import.meta.env.VITE_ARTIST_NAME || null,
-      songCount: Number.isFinite(count) ? count : null,
-      totalStreams: Number.isFinite(total) ? total : null,
-      topTracks: Array.isArray(topTracks) ? topTracks : [],
-      asOf: import.meta.env.VITE_STATS_AS_OF || null,
-      source: 'manual',
-    };
-  }
-
-  return null;
-}
-
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-
-function fmtNum(n) {
-  if (n === null || n === undefined || !Number.isFinite(n)) return DASH;
-  return n.toLocaleString('de-DE');
-}
-
-function parseNum(v) {
-  if (v === undefined || v === null || v === '') return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function sourceLabel(source) {
-  if (source === 'manual') return 'manual';
-  if (source === 'backend') return 'auto';
-  return source || DASH;
 }
