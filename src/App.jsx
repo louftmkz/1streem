@@ -133,6 +133,7 @@ export default function App() {
   const fileInputRef = useRef(null);
   const heroRef = useRef(null);
   const stickyRef = useRef(null);
+  const touchStartRef = useRef(null);
   // 0 = big hero fully visible, 1 = big hero fully scrolled out
   const [scrollProgress, setScrollProgress] = useState(0);
   const [view, setView] = useState('top10'); // 'top10' | 'songs'
@@ -344,6 +345,33 @@ export default function App() {
     setPendingImport(null);
   };
 
+  // Swipe-Navigation zwischen Tabs (nur auf <main>)
+  const handleTouchStart = (e) => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    touchStartRef.current = {
+      x: t.clientX,
+      y: t.clientY,
+      time: Date.now(),
+    };
+  };
+  const handleTouchEnd = (e) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start || e.changedTouches.length !== 1) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    const elapsed = Date.now() - start.time;
+    if (elapsed > 600) return; // zu langsam
+    if (Math.abs(dx) < 60) return; // zu kurz
+    if (Math.abs(dx) < Math.abs(dy) * 1.5) return; // mehr vertikal
+    const idx = TABS.findIndex((x) => x.id === tab);
+    if (idx < 0) return;
+    if (dx < 0 && idx < TABS.length - 1) setTab(TABS[idx + 1].id);
+    else if (dx > 0 && idx > 0) setTab(TABS[idx - 1].id);
+  };
+
   // ---------------------------------------------------------------------------
 
   return (
@@ -402,7 +430,11 @@ export default function App() {
         </div>
       </div>
 
-      <main className="max-w-3xl mx-auto px-6 py-8 space-y-10">
+      <main
+        className="max-w-3xl mx-auto px-6 py-8 space-y-10"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         {/* Hero — shrinks + fades as it scrolls past the sticky bar */}
         <section ref={heroRef}>
           <p
