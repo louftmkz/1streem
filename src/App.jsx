@@ -399,38 +399,6 @@ export default function App() {
           <Stat label="Ø pro Song" value={fmt(avg)} />
         </section>
 
-        {/* Top 10 */}
-        <section>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-6">
-            Top 10 · All Time High
-          </p>
-          {top10.length > 0 ? (
-            <ol className="divide-y divide-neutral-900">
-              {top10.map((t, i) => (
-                <li key={t.id} className="flex items-center gap-4 py-3">
-                  <span className="mono text-xs text-neutral-600 w-6 text-right tabular-nums">
-                    {String(i + 1).padStart(2, '0')}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="truncate text-neutral-200">{t.name}</div>
-                    <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5">
-                      {t.date || DASH}
-                    </div>
-                  </div>
-                  <span
-                    className="mono text-sm tabular-nums whitespace-nowrap"
-                    style={{ color: accent }}
-                  >
-                    {fmt(t._val)}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="text-neutral-700 text-sm">{DASH}</p>
-          )}
-        </section>
-
         {/* Catalog / Platform songs */}
         <section>
           <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
@@ -514,6 +482,47 @@ export default function App() {
                 />
               ))}
             </ul>
+          )}
+        </section>
+
+        {/* Top 10 — two-column compact layout (1-5 left, 6-10 right) */}
+        <section>
+          <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-6">
+            Top 10 · All Time High
+          </p>
+          {top10.length > 0 ? (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-5">
+              {[0, 5].map((offset) => (
+                <div key={offset} className="space-y-5">
+                  {top10.slice(offset, offset + 5).map((t, idx) => {
+                    const rank = offset + idx + 1;
+                    return (
+                      <div key={t.id} className="flex items-start gap-2">
+                        <span className="mono text-[10px] text-neutral-600 tabular-nums pt-1 w-5 shrink-0">
+                          {String(rank).padStart(2, '0')}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-neutral-200 truncate">
+                            {t.name}
+                          </div>
+                          <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5">
+                            {t.date || DASH}
+                          </div>
+                          <div
+                            className="mono text-sm tabular-nums mt-0.5 whitespace-nowrap"
+                            style={{ color: accent }}
+                          >
+                            {fmt(t._val)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-neutral-700 text-sm">{DASH}</p>
           )}
         </section>
       </main>
@@ -691,13 +700,18 @@ function CatalogRow({ song, onTogglePlatform, onDelete }) {
                 <button
                   key={p.id}
                   onClick={() => onTogglePlatform(p.id)}
-                  className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider transition-colors"
+                  className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider transition-colors inline-flex items-center gap-1"
                   style={{
-                    backgroundColor: enabled ? p.color : 'transparent',
-                    color: enabled ? '#0a0a0a' : '#525252',
+                    backgroundColor: 'transparent',
+                    color: enabled ? p.color : '#525252',
                     border: `1px solid ${enabled ? p.color : '#262626'}`,
                   }}
                 >
+                  {enabled && (
+                    <span aria-hidden="true" className="leading-none text-[9px]">
+                      ✓
+                    </span>
+                  )}
                   {p.short}
                 </button>
               );
