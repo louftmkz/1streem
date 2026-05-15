@@ -132,7 +132,9 @@ export default function App() {
   const [pendingImport, setPendingImport] = useState(null);
   const fileInputRef = useRef(null);
   const heroRef = useRef(null);
-  const [heroVisible, setHeroVisible] = useState(true);
+  const stickyRef = useRef(null);
+  // 0 = big hero fully visible, 1 = big hero fully scrolled out
+  const [scrollProgress, setScrollProgress] = useState(0);
   const [view, setView] = useState('top10'); // 'top10' | 'songs'
 
   useEffect(() => {
@@ -141,17 +143,39 @@ export default function App() {
     } catch {}
   }, [songs]);
 
-  // Detect when the big Hero leaves the viewport so we can show the
-  // compact hero sticky under the tabs.
+  // Scroll-driven progress: lerp between 0 (hero visible) and 1 (hero fully
+  // scrolled past the sticky bar). Drives the big hero's scale/opacity and
+  // the compact hero's appearance in parallel — avoids the binary flicker
+  // an IntersectionObserver gives at the threshold.
   useEffect(() => {
-    const el = heroRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      ([entry]) => setHeroVisible(entry.isIntersecting),
-      { rootMargin: '-40px 0px 0px 0px', threshold: 0 },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
+      const heroEl = heroRef.current;
+      if (!heroEl) return;
+      const stickyH = stickyRef.current?.offsetHeight ?? 100;
+      const heroBottom = heroEl.getBoundingClientRect().bottom;
+      const range = 100;
+      // p = 0 when heroBottom is well below the sticky zone
+      // p = 1 when heroBottom is at the bottom of the sticky zone
+      const p = Math.max(
+        0,
+        Math.min(1, (stickyH + range - heroBottom) / range),
+      );
+      setScrollProgress(p);
+    };
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(measure);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    measure();
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, []);
 
   const activeTab = lookupTab(tab);
@@ -345,6 +369,7 @@ export default function App() {
 
       {/* Sticky top zone — header + tabs + compact hero */}
       <div
+        ref={stickyRef}
         className="sticky top-0 z-30 bg-[#0a0a0a]"
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
@@ -356,11 +381,11 @@ export default function App() {
         </header>
         <TabBar tabs={TABS} active={tab} onSelect={setTab} />
         <div
-          className="border-b overflow-hidden transition-all duration-200 ease-out"
+          className="border-b overflow-hidden"
           style={{
-            borderColor: heroVisible ? 'transparent' : '#171717',
-            maxHeight: heroVisible ? 0 : 48,
-            opacity: heroVisible ? 0 : 1,
+            borderColor: scrollProgress > 0.1 ? '#171717' : 'transparent',
+            maxHeight: scrollProgress * 48,
+            opacity: scrollProgress,
           }}
         >
           <div className="max-w-3xl mx-auto px-6 py-2.5 flex items-baseline justify-between gap-4">
@@ -378,16 +403,21 @@ export default function App() {
       </div>
 
       <main className="max-w-3xl mx-auto px-6 py-8 space-y-10">
-        {/* Hero */}
+        {/* Hero — shrinks + fades as it scrolls past the sticky bar */}
         <section ref={heroRef}>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
+          <p
+            className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4"
+            style={{ opacity: 1 - scrollProgress }}
+          >
             {heroLabel}
           </p>
           <p
-            className="mono font-bold tracking-tight tabular-nums leading-none"
+            className="mono font-bold tracking-tight tabular-nums leading-none origin-top-left"
             style={{
               color: totalStreams > 0 ? accent : '#404040',
               fontSize: 'clamp(3rem, 12vw, 7rem)',
+              opacity: 1 - scrollProgress,
+              transform: `scale(${1 - scrollProgress * 0.7})`,
             }}
           >
             {fmt(totalStreams)}
@@ -405,23 +435,23 @@ export default function App() {
           <div className="flex gap-6 border-b border-neutral-900 mb-6">
             <button
               onClick={() => setView('top10')}
-              className="py-2 text-sm font-semibold tracking-tight border-b-2 -mb-px transition-colors"
+              className="py-2 text-sm font-semibold tracking-tight border-b-2 -mb-px transition-colors whitespace-nowrap"
               style={{
                 color: view === 'top10' ? accent : '#737373',
                 borderColor: view === 'top10' ? accent : 'transparent',
               }}
             >
-              Top 10
+              Top 10 (All-Time Streams)
             </button>
             <button
               onClick={() => setView('songs')}
-              className="py-2 text-sm font-semibold tracking-tight border-b-2 -mb-px transition-colors"
+              className="py-2 text-sm font-semibold tracking-tight border-b-2 -mb-px transition-colors whitespace-nowrap"
               style={{
                 color: view === 'songs' ? accent : '#737373',
                 borderColor: view === 'songs' ? accent : 'transparent',
               }}
             >
-              {tab === 'all' ? 'Katalog' : 'Songs'}
+              Alle Songs
             </button>
           </div>
 
