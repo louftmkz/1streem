@@ -131,12 +131,27 @@ export default function App() {
   const [showAdd, setShowAdd] = useState(false);
   const [pendingImport, setPendingImport] = useState(null);
   const fileInputRef = useRef(null);
+  const heroRef = useRef(null);
+  const [heroVisible, setHeroVisible] = useState(true);
 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(songs));
     } catch {}
   }, [songs]);
+
+  // Detect when the big Hero leaves the viewport so we can show the
+  // compact hero sticky under the tabs.
+  useEffect(() => {
+    const el = heroRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => setHeroVisible(entry.isIntersecting),
+      { rootMargin: '-40px 0px 0px 0px', threshold: 0 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
 
   const activeTab = lookupTab(tab);
   const accent = activeTab.color;
@@ -317,6 +332,8 @@ export default function App() {
         input[type=number]::-webkit-inner-spin-button,
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
         input[type=number] { -moz-appearance: textfield; }
+        input[type=search]::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+        input[type=search]::-webkit-search-decoration { -webkit-appearance: none; }
         .tabs-scroll::-webkit-scrollbar { display: none; }
         .tabs-scroll { scrollbar-width: none; }
       `}</style>
@@ -332,12 +349,34 @@ export default function App() {
         </div>
       </header>
 
-      {/* Top-tabs */}
-      <TabBar tabs={TABS} active={tab} onSelect={setTab} />
+      {/* Sticky top: tabs + compact hero (shown when big hero is scrolled out) */}
+      <div className="sticky top-0 z-30 bg-[#0a0a0a]">
+        <TabBar tabs={TABS} active={tab} onSelect={setTab} />
+        <div
+          className="border-b overflow-hidden transition-all duration-200 ease-out"
+          style={{
+            borderColor: heroVisible ? 'transparent' : '#171717',
+            maxHeight: heroVisible ? 0 : 48,
+            opacity: heroVisible ? 0 : 1,
+          }}
+        >
+          <div className="max-w-3xl mx-auto px-6 py-2.5 flex items-baseline justify-between gap-4">
+            <span className="text-[10px] uppercase tracking-widest text-neutral-500 truncate">
+              {tab === 'all' ? 'Alle Plattformen' : activeTab.label}
+            </span>
+            <span
+              className="mono text-base font-bold tabular-nums whitespace-nowrap"
+              style={{ color: totalStreams > 0 ? accent : '#404040' }}
+            >
+              {fmt(totalStreams)}
+            </span>
+          </div>
+        </div>
+      </div>
 
       <main className="max-w-3xl mx-auto px-6 py-10 space-y-16">
         {/* Hero */}
-        <section>
+        <section ref={heroRef}>
           <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
             {heroLabel}
           </p>
@@ -396,15 +435,27 @@ export default function App() {
             {tab === 'all' ? 'Katalog' : `Songs auf ${activeTab.label}`}
           </p>
 
-          <div className="flex items-center gap-3 mb-4 sticky top-0 bg-[#0a0a0a] py-2 z-10">
-            <input
-              type="search"
-              placeholder="Suche..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-3 py-2 placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
-              style={{ fontSize: '16px' }}
-            />
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex-1 relative">
+              <input
+                type="search"
+                placeholder="Suche..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full bg-neutral-900 border border-neutral-800 rounded pl-3 pr-9 py-2 placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
+                style={{ fontSize: '16px' }}
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  aria-label="Suche löschen"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-200 w-7 h-7 flex items-center justify-center text-lg leading-none rounded"
+                >
+                  ×
+                </button>
+              )}
+            </div>
             {tab === 'all' && (
               <button
                 onClick={() => setShowAdd(!showAdd)}
@@ -583,7 +634,7 @@ function TabBar({ tabs, active, onSelect }) {
   }, [active]);
 
   return (
-    <nav className="border-b border-neutral-900 bg-[#0a0a0a] sticky top-0 z-20">
+    <nav className="border-b border-neutral-900 bg-[#0a0a0a]">
       <div className="max-w-3xl mx-auto">
         <div
           ref={containerRef}
