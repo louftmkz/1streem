@@ -133,6 +133,7 @@ export default function App() {
   const fileInputRef = useRef(null);
   const heroRef = useRef(null);
   const [heroVisible, setHeroVisible] = useState(true);
+  const [view, setView] = useState('top10'); // 'top10' | 'songs'
 
   useEffect(() => {
     try {
@@ -399,130 +400,151 @@ export default function App() {
           <Stat label="Ø pro Song" value={fmt(avg)} />
         </section>
 
-        {/* Catalog / Platform songs */}
+        {/* Toggle: Top 10 ↔ Katalog/Songs */}
         <section>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
-            {tab === 'all' ? 'Katalog' : `Songs auf ${activeTab.label}`}
-          </p>
-
-          <div className="flex items-center gap-3 mb-4">
-            <div className="flex-1 relative">
-              <input
-                type="search"
-                placeholder="Suche..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-neutral-900 border border-neutral-800 rounded pl-3 pr-9 py-2 placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
-                style={{ fontSize: '16px' }}
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => setSearch('')}
-                  aria-label="Suche löschen"
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-200 w-7 h-7 flex items-center justify-center text-lg leading-none rounded"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-            {tab === 'all' && (
-              <button
-                onClick={() => setShowAdd(!showAdd)}
-                className="px-4 py-2 rounded font-bold text-sm text-black whitespace-nowrap"
-                style={{ backgroundColor: accent }}
-              >
-                {showAdd ? '× Abbrechen' : '+ Song'}
-              </button>
-            )}
+          <div className="flex gap-6 border-b border-neutral-900 mb-6">
+            <button
+              onClick={() => setView('top10')}
+              className="py-2 text-sm font-semibold tracking-tight border-b-2 -mb-px transition-colors"
+              style={{
+                color: view === 'top10' ? accent : '#737373',
+                borderColor: view === 'top10' ? accent : 'transparent',
+              }}
+            >
+              Top 10
+            </button>
+            <button
+              onClick={() => setView('songs')}
+              className="py-2 text-sm font-semibold tracking-tight border-b-2 -mb-px transition-colors"
+              style={{
+                color: view === 'songs' ? accent : '#737373',
+                borderColor: view === 'songs' ? accent : 'transparent',
+              }}
+            >
+              {tab === 'all' ? 'Katalog' : 'Songs'}
+            </button>
           </div>
 
-          {tab === 'all' && showAdd && (
-            <div className="mb-4">
-              <AddForm
-                accent={accent}
-                onSave={addSong}
-                onCancel={() => setShowAdd(false)}
-              />
-            </div>
-          )}
-
-          {filteredForList.length === 0 ? (
-            <p className="text-neutral-700 text-sm py-12 text-center">
-              {search
-                ? 'Keine Treffer.'
-                : tab === 'all'
-                  ? 'Noch keine Songs. Tap auf + um den ersten hinzuzufügen.'
-                  : `Keine Songs auf ${activeTab.label} aktiviert. Wechsel zu "Alle" und aktivier die Plattform pro Song.`}
-            </p>
-          ) : tab === 'all' ? (
-            <ul className="divide-y divide-neutral-900">
-              {filteredForList.map((song) => (
-                <CatalogRow
-                  key={song.id}
-                  song={song}
-                  onTogglePlatform={(pid) => togglePlatform(song.id, pid)}
-                  onDelete={() => deleteSong(song.id)}
-                />
-              ))}
-            </ul>
-          ) : (
-            <ul className="divide-y divide-neutral-900">
-              {filteredForList.map((song) => (
-                <PlatformRow
-                  key={song.id}
-                  song={song}
-                  platformId={tab}
-                  accent={accent}
-                  editing={editingId === song.id}
-                  onEdit={() => setEditingId(song.id)}
-                  onSave={(v) => setPlatformStreams(song.id, tab, v)}
-                  onCancel={() => setEditingId(null)}
-                  onNext={() => setEditingId(nextEditableId(song.id))}
-                />
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Top 10 — two-column compact layout (1-5 left, 6-10 right) */}
-        <section>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-6">
-            Top 10 · All Time High
-          </p>
-          {top10.length > 0 ? (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-5">
-              {[0, 5].map((offset) => (
-                <div key={offset} className="space-y-5">
-                  {top10.slice(offset, offset + 5).map((t, idx) => {
-                    const rank = offset + idx + 1;
-                    return (
-                      <div key={t.id} className="flex items-start gap-2">
-                        <span className="mono text-[10px] text-neutral-600 tabular-nums pt-1 w-5 shrink-0">
-                          {String(rank).padStart(2, '0')}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm text-neutral-200 truncate">
-                            {t.name}
-                          </div>
-                          <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5">
+          {view === 'top10' &&
+            (top10.length > 0 ? (
+              <div className="grid grid-cols-2 gap-3">
+                {[0, 5].map((offset) => (
+                  <div key={offset} className="space-y-3">
+                    {top10.slice(offset, offset + 5).map((t, idx) => {
+                      const rank = offset + idx + 1;
+                      return (
+                        <div
+                          key={t.id}
+                          className="rounded-lg border border-neutral-800 px-3 py-3"
+                        >
+                          <div className="text-[9px] uppercase tracking-widest text-neutral-600 mb-1">
                             {t.date || DASH}
                           </div>
+                          <div className="flex items-baseline gap-1.5 mb-1">
+                            <span className="mono text-[10px] text-neutral-600 tabular-nums shrink-0">
+                              {String(rank).padStart(2, '0')}
+                            </span>
+                            <span className="text-sm text-neutral-200 truncate min-w-0">
+                              {t.name}
+                            </span>
+                          </div>
                           <div
-                            className="mono text-sm tabular-nums mt-0.5 whitespace-nowrap"
+                            className="mono text-sm tabular-nums whitespace-nowrap"
                             style={{ color: accent }}
                           >
                             {fmt(t._val)}
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-neutral-700 text-sm">{DASH}</p>
+            ))}
+
+          {view === 'songs' && (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-1 relative">
+                  <input
+                    type="search"
+                    placeholder="Suche..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="w-full bg-neutral-900 border border-neutral-800 rounded pl-3 pr-9 py-2 placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
+                    style={{ fontSize: '16px' }}
+                  />
+                  {search && (
+                    <button
+                      type="button"
+                      onClick={() => setSearch('')}
+                      aria-label="Suche löschen"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-200 w-7 h-7 flex items-center justify-center text-lg leading-none rounded"
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-neutral-700 text-sm">{DASH}</p>
+                {tab === 'all' && (
+                  <button
+                    onClick={() => setShowAdd(!showAdd)}
+                    className="px-4 py-2 rounded font-bold text-sm text-black whitespace-nowrap"
+                    style={{ backgroundColor: accent }}
+                  >
+                    {showAdd ? '× Abbrechen' : '+ Song'}
+                  </button>
+                )}
+              </div>
+
+              {tab === 'all' && showAdd && (
+                <div className="mb-4">
+                  <AddForm
+                    accent={accent}
+                    onSave={addSong}
+                    onCancel={() => setShowAdd(false)}
+                  />
+                </div>
+              )}
+
+              {filteredForList.length === 0 ? (
+                <p className="text-neutral-700 text-sm py-12 text-center">
+                  {search
+                    ? 'Keine Treffer.'
+                    : tab === 'all'
+                      ? 'Noch keine Songs. Tap auf + um den ersten hinzuzufügen.'
+                      : `Keine Songs auf ${activeTab.label} aktiviert. Wechsel zu "Alle" und aktivier die Plattform pro Song.`}
+                </p>
+              ) : tab === 'all' ? (
+                <ul className="divide-y divide-neutral-900">
+                  {filteredForList.map((song) => (
+                    <CatalogRow
+                      key={song.id}
+                      song={song}
+                      onTogglePlatform={(pid) => togglePlatform(song.id, pid)}
+                      onDelete={() => deleteSong(song.id)}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <ul className="divide-y divide-neutral-900">
+                  {filteredForList.map((song) => (
+                    <PlatformRow
+                      key={song.id}
+                      song={song}
+                      platformId={tab}
+                      accent={accent}
+                      editing={editingId === song.id}
+                      onEdit={() => setEditingId(song.id)}
+                      onSave={(v) => setPlatformStreams(song.id, tab, v)}
+                      onCancel={() => setEditingId(null)}
+                      onNext={() => setEditingId(nextEditableId(song.id))}
+                    />
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </section>
       </main>
@@ -700,11 +722,13 @@ function CatalogRow({ song, onTogglePlatform, onDelete }) {
                 <button
                   key={p.id}
                   onClick={() => onTogglePlatform(p.id)}
-                  className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider transition-colors inline-flex items-center gap-1"
+                  className="px-2.5 py-0.5 rounded-full text-[10px] uppercase font-normal tracking-wider transition-colors inline-flex items-center gap-1"
                   style={{
                     backgroundColor: 'transparent',
                     color: enabled ? p.color : '#525252',
-                    border: `1px solid ${enabled ? p.color : '#262626'}`,
+                    borderWidth: '1px',
+                    borderStyle: 'solid',
+                    borderColor: enabled ? `${p.color}55` : '#262626',
                   }}
                 >
                   {enabled && (
