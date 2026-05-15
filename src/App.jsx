@@ -335,22 +335,24 @@ export default function App() {
         input[type=search]::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
         input[type=search]::-webkit-search-decoration { -webkit-appearance: none; }
         .tabs-scroll::-webkit-scrollbar { display: none; }
-        .tabs-scroll { scrollbar-width: none; }
+        .tabs-scroll {
+          scrollbar-width: none;
+          touch-action: pan-x;
+          overscroll-behavior-x: contain;
+        }
       `}</style>
 
-      {/* Header */}
-      <header
-        className="border-b border-neutral-900 bg-[#0a0a0a]"
+      {/* Sticky top zone — header + tabs + compact hero */}
+      <div
+        className="sticky top-0 z-30 bg-[#0a0a0a]"
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
-        <div className="max-w-3xl mx-auto px-6 py-5 flex items-baseline gap-3">
-          <span className="text-lg font-bold tracking-tight">1streem</span>
-          <span className="text-sm text-neutral-500">· {ARTIST_NAME}</span>
-        </div>
-      </header>
-
-      {/* Sticky top: tabs + compact hero (shown when big hero is scrolled out) */}
-      <div className="sticky top-0 z-30 bg-[#0a0a0a]">
+        <header className="border-b border-neutral-900">
+          <div className="max-w-3xl mx-auto px-6 py-3 flex items-baseline gap-3">
+            <span className="text-base font-bold tracking-tight">1streem</span>
+            <span className="text-xs text-neutral-500">· {ARTIST_NAME}</span>
+          </div>
+        </header>
         <TabBar tabs={TABS} active={tab} onSelect={setTab} />
         <div
           className="border-b overflow-hidden transition-all duration-200 ease-out"
@@ -374,7 +376,7 @@ export default function App() {
         </div>
       </div>
 
-      <main className="max-w-3xl mx-auto px-6 py-10 space-y-16">
+      <main className="max-w-3xl mx-auto px-6 py-8 space-y-10">
         {/* Hero */}
         <section ref={heroRef}>
           <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4">
@@ -392,7 +394,7 @@ export default function App() {
         </section>
 
         {/* Secondary stats */}
-        <section className="grid grid-cols-2 gap-8 border-t border-neutral-900 pt-10">
+        <section className="grid grid-cols-2 gap-8 border-t border-neutral-900 pt-6">
           <Stat label="Songs" value={fmt(songCount)} />
           <Stat label="Ø pro Song" value={fmt(avg)} />
         </section>
