@@ -317,7 +317,7 @@ export default function App() {
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [totalStreams]);
+  }, [songs]);
 
   // Detect "stuck" state for the sticky-top zone: a 1px sentinel sits right
   // above the sticky div. While it's in the viewport, the sticky hasn't hit
