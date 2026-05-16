@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import * as spotifyAuth from './lib/spotifyAuth.js';
+import { fetchArtistCatalog, computeDiff, applyImport, extractArtistId } from './lib/spotifyImport.js';
+import Callback from './pages/Callback.jsx';
 
 // =============================================================================
 // 1streem — Multi-Platform Stream Aggregator
@@ -13,6 +16,18 @@ const SONGS_LEGACY_V2 = '1streem-songs-v2';
 const SONGS_LEGACY_V1 = '1streem-songs-v1';
 const PLATFORMS_STORAGE = '1streem-platforms-v1';
 const ARTIST_NAME_STORAGE = '1streem-artist-name-v1';
+const SPOTIFY_LINK_STORAGE = '1streem-spotify-link-v1';
+
+function loadSpotifyLink() {
+  try {
+    const raw = localStorage.getItem(SPOTIFY_LINK_STORAGE);
+    if (raw) {
+      const obj = JSON.parse(raw);
+      if (obj && obj.artistId) return obj;
+    }
+  } catch {}
+  return null;
+}
 const DEFAULT_ARTIST_NAME =
   import.meta.env.VITE_ARTIST_NAME || 'Artist Name';
 const SUPPORT_EMAIL = 'lou+1streem@fmcrew.de';
@@ -222,6 +237,15 @@ export default function App() {
   const [artistName, setArtistName] = useState(loadArtistName);
   const [editingArtist, setEditingArtist] = useState(false);
   const [isStuck, setIsStuck] = useState(false);
+  const [path, setPath] = useState(() =>
+    typeof window !== 'undefined' ? window.location.pathname : '/',
+  );
+  const [spotifyLink, setSpotifyLink] = useState(loadSpotifyLink);
+  const [showUrlPaste, setShowUrlPaste] = useState(false);
+  const [importBusy, setImportBusy] = useState(null);
+  const [importDiff, setImportDiff] = useState(null);
+  const [importError, setImportError] = useState(null);
+  const [showSpotifyInfo, setShowSpotifyInfo] = useState(false);
   const fileInputRef = useRef(null);
   const heroRef = useRef(null);
   const stickyRef = useRef(null);
@@ -240,6 +264,31 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(ARTIST_NAME_STORAGE, artistName); } catch {}
   }, [artistName]);
+  useEffect(() => {
+    try {
+      if (spotifyLink) localStorage.setItem(SPOTIFY_LINK_STORAGE, JSON.stringify(spotifyLink));
+      else localStorage.removeItem(SPOTIFY_LINK_STORAGE);
+    } catch {}
+  }, [spotifyLink]);
+  // Popstate for /callback handling
+  useEffect(() => {
+    const onPop = () => setPath(window.location.pathname);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  // Post-OAuth: open URL paste if not yet linked, or auto-refresh if linked
+  useEffect(() => {
+    if (typeof sessionStorage === 'undefined') return;
+    const justConnected = sessionStorage.getItem('spotify_just_connected');
+    if (!justConnected) return;
+    sessionStorage.removeItem('spotify_just_connected');
+    if (spotifyLink?.artistId) {
+      runImport(spotifyLink.artistId);
+    } else {
+      setShowUrlPaste(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Detect "stuck" state for the sticky-top zone: a 1px sentinel sits right
   // above the sticky div. While it's in the viewport, the sticky hasn't hit
@@ -511,6 +560,65 @@ export default function App() {
     setPendingImport(null);
   };
 
+  // ----- Spotify catalog import -----
+  const handleConnectSpotify = async () => {
+    setImportError(null);
+    try {
+      await spotifyAuth.login();
+    } catch (e) {
+      setImportError(e.message);
+    }
+  };
+  const handleSubmitArtistUrl = async (url) => {
+    const id = extractArtistId(url);
+    if (!id) {
+      setImportError('Konnte keine Artist-ID aus der URL erkennen.');
+      return;
+    }
+    setShowUrlPaste(false);
+    await runImport(id);
+  };
+  const runImport = async (artistId) => {
+    setImportError(null);
+    setImportBusy({ phase: 'starting' });
+    try {
+      const result = await fetchArtistCatalog(artistId, (p) => setImportBusy(p));
+      const diff = computeDiff(result.tracks, songs);
+      const link = {
+        artistId: result.artist.id,
+        artistName: result.artist.name,
+        followers: result.artist.followers,
+        lastSyncedAt: new Date().toISOString(),
+      };
+      setSpotifyLink(link);
+      setArtistName(result.artist.name);
+      setImportBusy(null);
+      setImportDiff({ artist: result.artist, matches: diff.matches, newOnes: diff.newOnes });
+    } catch (e) {
+      setImportBusy(null);
+      setImportError(e.message);
+    }
+  };
+  const handleApplyImport = (choices) => {
+    if (!importDiff) return;
+    const next = applyImport(
+      songs,
+      { matches: importDiff.matches, newOnes: importDiff.newOnes },
+      choices,
+      platforms,
+    );
+    setSongs(next);
+    setImportDiff(null);
+  };
+  const handleDisconnectSpotify = () => {
+    if (!window.confirm(
+      'Spotify trennen? Artist-Name wird wieder editierbar. Songs bleiben unangetastet.',
+    )) return;
+    spotifyAuth.logout();
+    setSpotifyLink(null);
+    setShowSpotifyInfo(false);
+  };
+
   // Swipe nav
   const handleTouchStart = (e) => {
     if (e.touches.length !== 1) return;
@@ -533,6 +641,9 @@ export default function App() {
     if (dx < 0 && idx < TABS.length - 1) setTab(TABS[idx + 1].id);
     else if (dx > 0 && idx > 0) setTab(TABS[idx - 1].id);
   };
+
+  // /callback route — Spotify OAuth redirect handler
+  if (path === '/callback') return <Callback />;
 
   return (
     <div
@@ -563,7 +674,16 @@ export default function App() {
         <div className="max-w-3xl mx-auto px-6 py-3 flex items-baseline gap-3">
           <span className="text-base font-bold tracking-tight">1streem</span>
           <span className="text-xs text-neutral-500">·</span>
-          {editingArtist ? (
+          {spotifyLink ? (
+            <button
+              onClick={() => setShowSpotifyInfo(true)}
+              className="flex items-baseline gap-1.5 text-sm text-neutral-300 hover:text-neutral-100 truncate"
+              title="Spotify-Verbindung"
+            >
+              <span className="truncate">{spotifyLink.artistName || artistName}</span>
+              <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: '#1DB954' }} />
+            </button>
+          ) : editingArtist ? (
             <input
               type="text"
               autoFocus
@@ -724,7 +844,7 @@ export default function App() {
           {view === 'songs' && (
             <>
               {tab === 'all' && (
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
                   <button
                     onClick={() => setShowAdd(!showAdd)}
                     className="px-4 py-2 rounded font-bold text-sm text-black whitespace-nowrap"
@@ -732,7 +852,28 @@ export default function App() {
                   >
                     {showAdd ? '× Abbrechen' : '+ Song'}
                   </button>
-                  {/* Phase 3 placeholder: Connect Spotify + Refresh */}
+                  {spotifyLink ? (
+                    <button
+                      onClick={() => runImport(spotifyLink.artistId)}
+                      disabled={Boolean(importBusy)}
+                      className="px-3 py-2 rounded font-semibold text-sm text-white inline-flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+                      style={{ backgroundColor: '#1DB954' }}
+                      title="Spotify-Katalog aktualisieren"
+                    >
+                      <RefreshIcon size={14} />
+                      {importBusy ? 'lädt...' : 'Aktualisieren'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleConnectSpotify}
+                      className="px-3 py-2 rounded font-bold text-sm text-white inline-flex items-center gap-1.5 whitespace-nowrap"
+                      style={{ backgroundColor: '#1DB954' }}
+                      title="Spotify-Katalog verbinden"
+                    >
+                      <SpotifyIcon size={14} />
+                      Spotify verbinden
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -918,6 +1059,85 @@ export default function App() {
           email={SUPPORT_EMAIL}
           onClose={() => setShowTestimonial(false)}
         />
+      )}
+
+      {showUrlPaste && (
+        <ArtistUrlModal
+          onSubmit={handleSubmitArtistUrl}
+          onCancel={() => setShowUrlPaste(false)}
+        />
+      )}
+
+      {importBusy && <ImportBusyModal busy={importBusy} />}
+
+      {importError && (
+        <Modal onClose={() => setImportError(null)}>
+          <h3 className="text-base font-bold text-neutral-100">Spotify-Fehler</h3>
+          <p className="text-sm text-neutral-400 break-words">{importError}</p>
+          <p className="text-xs text-neutral-600">
+            Häufige Ursachen: Client ID nicht gesetzt, Redirect URI in der Dev App nicht
+            registriert, dein Spotify-Account nicht im User-Management eingetragen.
+          </p>
+          <div className="flex justify-end pt-1">
+            <button
+              onClick={() => setImportError(null)}
+              className="px-4 py-2 text-sm font-bold rounded text-black"
+              style={{ backgroundColor: '#1DB954' }}
+            >
+              OK
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {importDiff && (
+        <ImportDiffModal
+          diff={importDiff}
+          onCancel={() => setImportDiff(null)}
+          onApply={handleApplyImport}
+        />
+      )}
+
+      {showSpotifyInfo && spotifyLink && (
+        <Modal onClose={() => setShowSpotifyInfo(false)}>
+          <h3 className="text-base font-bold text-neutral-100">Spotify-Verbindung</h3>
+          <div className="text-sm text-neutral-400 space-y-1">
+            <p>
+              Artist: <span className="text-neutral-200">{spotifyLink.artistName}</span>
+            </p>
+            {spotifyLink.followers != null && (
+              <p>
+                Follower:{' '}
+                <span className="mono tabular-nums text-neutral-200">
+                  {fmt(spotifyLink.followers)}
+                </span>
+              </p>
+            )}
+            {spotifyLink.lastSyncedAt && (
+              <p>
+                Letzter Sync:{' '}
+                <span className="text-neutral-200">
+                  {new Date(spotifyLink.lastSyncedAt).toLocaleString('de-DE')}
+                </span>
+              </p>
+            )}
+          </div>
+          <div className="flex gap-2 justify-end pt-1">
+            <button
+              onClick={handleDisconnectSpotify}
+              className="px-4 py-2 text-sm font-semibold text-red-400 hover:text-red-300"
+            >
+              Trennen
+            </button>
+            <button
+              onClick={() => setShowSpotifyInfo(false)}
+              className="px-4 py-2 text-sm font-bold rounded text-black"
+              style={{ backgroundColor: '#1DB954' }}
+            >
+              Schließen
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -1531,6 +1751,264 @@ function TestimonialModal({ email, onClose }) {
   );
 }
 
+function ArtistUrlModal({ onSubmit, onCancel }) {
+  const [url, setUrl] = useState('');
+  const submit = (e) => {
+    e?.preventDefault();
+    if (!url.trim()) return;
+    onSubmit(url);
+  };
+  return (
+    <Modal onClose={onCancel} wide>
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-base font-bold text-neutral-100">Spotify-Artist-URL einfügen</h3>
+        <button
+          onClick={onCancel}
+          className="text-neutral-500 hover:text-neutral-200 text-lg leading-none"
+          aria-label="Schließen"
+        >
+          ×
+        </button>
+      </div>
+      <p className="text-sm text-neutral-400">
+        Öffne dein Artist-Profil in Spotify, kopier die URL aus der Adressleiste oder via
+        Teilen → Link kopieren. Beispiel:
+      </p>
+      <code className="block text-xs text-neutral-500 bg-[#0a0a0a] border border-neutral-800 rounded px-3 py-2 break-all">
+        https://open.spotify.com/artist/3LaYDsZXr5HlfDY7vtxq0v
+      </code>
+      <form onSubmit={submit} className="space-y-4">
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          autoFocus
+          required
+          placeholder="https://open.spotify.com/artist/..."
+          className="w-full bg-[#0a0a0a] border border-neutral-800 rounded px-3 py-3 text-base focus:outline-none focus:border-neutral-700"
+          style={{ fontSize: '16px' }}
+        />
+        <div className="flex gap-2 justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-semibold text-neutral-500 hover:text-neutral-300"
+          >
+            Abbrechen
+          </button>
+          <button
+            type="submit"
+            className="px-4 py-2 text-sm font-bold rounded text-white"
+            style={{ backgroundColor: '#1DB954' }}
+          >
+            Importieren
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ImportBusyModal({ busy }) {
+  let label = 'Lade...';
+  if (busy.phase === 'artist') label = `Artist: ${busy.label}`;
+  else if (busy.phase === 'albums') label = `${busy.count} Releases gefunden`;
+  else if (busy.phase === 'tracks')
+    label = `Lade Tracks ${busy.current}/${busy.total}${busy.album ? ` · ${busy.album}` : ''}`;
+  const progress =
+    busy.phase === 'tracks' && busy.total ? (busy.current / busy.total) * 100 : null;
+  return (
+    <div
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+    >
+      <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 max-w-sm w-full space-y-4 shadow-2xl">
+        <div className="flex items-center gap-3">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-neutral-700 border-t-[#1DB954]" />
+          <h3 className="text-base font-bold text-neutral-100">Spotify-Import</h3>
+        </div>
+        <p className="text-sm text-neutral-400 break-words">{label}</p>
+        {progress != null && (
+          <div className="w-full h-1 bg-neutral-800 rounded overflow-hidden">
+            <div
+              className="h-full transition-all duration-200"
+              style={{ width: `${progress}%`, backgroundColor: '#1DB954' }}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ImportDiffModal({ diff, onCancel, onApply }) {
+  const { matches, newOnes, artist } = diff;
+  const [choices, setChoices] = useState(() => {
+    const init = {};
+    for (const m of matches) init[`m:${m.spotify.spotifyUri}`] = true;
+    for (const n of newOnes) init[`n:${n.spotifyUri}`] = true;
+    return init;
+  });
+  const setAll = (val, prefix) => {
+    setChoices((c) => {
+      const next = { ...c };
+      for (const k of Object.keys(c)) {
+        if (k.startsWith(prefix)) next[k] = val;
+      }
+      return next;
+    });
+  };
+  const toggle = (key) => setChoices((c) => ({ ...c, [key]: !c[key] }));
+  const newAccepted = newOnes.filter((n) => choices[`n:${n.spotifyUri}`]).length;
+  const matchAccepted = matches.filter((m) => choices[`m:${m.spotify.spotifyUri}`]).length;
+
+  return (
+    <Modal onClose={onCancel} wide>
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-base font-bold text-neutral-100">
+          Import-Vorschau · {artist?.name}
+        </h3>
+        <button
+          onClick={onCancel}
+          className="text-neutral-500 hover:text-neutral-200 text-lg leading-none"
+          aria-label="Schließen"
+        >
+          ×
+        </button>
+      </div>
+
+      <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 -mx-1">
+        <p className="text-xs text-neutral-500">
+          Stream-Zahlen werden bei Matches{' '}
+          <strong className="text-neutral-300">nicht überschrieben</strong>. Nur leere
+          Metadaten (Cover, Datum) werden ergänzt.
+        </p>
+
+        {/* New */}
+        <div>
+          <div className="flex items-center justify-between px-1 pb-1">
+            <p className="text-[10px] uppercase tracking-widest text-neutral-500">
+              Neu hinzufügen ({newOnes.length})
+            </p>
+            {newOnes.length > 0 && (
+              <div className="text-[10px] text-neutral-600">
+                <button onClick={() => setAll(true, 'n:')} className="hover:text-neutral-300">
+                  alle
+                </button>
+                {' · '}
+                <button onClick={() => setAll(false, 'n:')} className="hover:text-neutral-300">
+                  keine
+                </button>
+              </div>
+            )}
+          </div>
+          {newOnes.length === 0 ? (
+            <p className="text-xs text-neutral-600 px-1">Keine neuen Songs.</p>
+          ) : (
+            <ul className="space-y-1">
+              {newOnes.map((t) => (
+                <DiffRow
+                  key={t.spotifyUri}
+                  track={t}
+                  badge="NEU"
+                  checked={!!choices[`n:${t.spotifyUri}`]}
+                  onToggle={() => toggle(`n:${t.spotifyUri}`)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Match */}
+        <div className="border-t border-neutral-800 pt-3">
+          <div className="flex items-center justify-between px-1 pb-1">
+            <p className="text-[10px] uppercase tracking-widest text-neutral-500">
+              Matches — Streams bleiben ({matches.length})
+            </p>
+            {matches.length > 0 && (
+              <div className="text-[10px] text-neutral-600">
+                <button onClick={() => setAll(true, 'm:')} className="hover:text-neutral-300">
+                  alle
+                </button>
+                {' · '}
+                <button onClick={() => setAll(false, 'm:')} className="hover:text-neutral-300">
+                  keine
+                </button>
+              </div>
+            )}
+          </div>
+          {matches.length === 0 ? (
+            <p className="text-xs text-neutral-600 px-1">Keine Übereinstimmungen.</p>
+          ) : (
+            <ul className="space-y-1">
+              {matches.map((m) => (
+                <DiffRow
+                  key={m.spotify.spotifyUri}
+                  track={m.spotify}
+                  badge={`MATCH: ${m.existing.name}`}
+                  checked={!!choices[`m:${m.spotify.spotifyUri}`]}
+                  onToggle={() => toggle(`m:${m.spotify.spotifyUri}`)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 pt-2 border-t border-neutral-800">
+        <p className="text-xs text-neutral-500">
+          {newAccepted} neu · {matchAccepted} merge
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-semibold text-neutral-500 hover:text-neutral-300"
+          >
+            Abbrechen
+          </button>
+          <button
+            onClick={() => onApply(choices)}
+            disabled={newAccepted + matchAccepted === 0}
+            className="px-4 py-2 text-sm font-bold rounded text-white disabled:opacity-40"
+            style={{ backgroundColor: '#1DB954' }}
+          >
+            Importieren
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function DiffRow({ track, badge, checked, onToggle }) {
+  return (
+    <li>
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-3 px-2 py-2 rounded hover:bg-neutral-800/40 text-left"
+      >
+        <Cover url={track.cover} size={36} />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm text-neutral-200 truncate">{track.name}</div>
+          <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5 truncate">
+            {track.date || '—'} · {badge}
+          </div>
+        </div>
+        <span
+          className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${
+            checked ? 'border-[#1DB954] bg-[#1DB954]/20' : 'border-neutral-700'
+          }`}
+        >
+          {checked && (
+            <span className="text-[10px] leading-none" style={{ color: '#1DB954' }}>
+              ✓
+            </span>
+          )}
+        </span>
+      </button>
+    </li>
+  );
+}
+
 function Cover({ url, size = 40 }) {
   if (url) {
     return (
@@ -1629,6 +2107,24 @@ function EyeOffIcon({ size = 16 }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
       <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
+function RefreshIcon({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="23 4 23 10 17 10" />
+      <polyline points="1 20 1 14 7 14" />
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+    </svg>
+  );
+}
+
+function SpotifyIcon({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm4.586 14.424a.623.623 0 0 1-.857.207c-2.348-1.435-5.304-1.76-8.785-.964a.623.623 0 1 1-.277-1.215c3.809-.87 7.077-.496 9.713 1.114a.623.623 0 0 1 .206.858zm1.223-2.722a.78.78 0 0 1-1.072.257c-2.687-1.652-6.785-2.131-9.965-1.166a.78.78 0 1 1-.453-1.494c3.633-1.102 8.147-.568 11.234 1.33a.78.78 0 0 1 .256 1.073zm.105-2.835c-3.223-1.914-8.54-2.09-11.618-1.156a.935.935 0 1 1-.542-1.79c3.532-1.072 9.404-.865 13.115 1.338a.935.935 0 1 1-.955 1.608z" />
     </svg>
   );
 }
