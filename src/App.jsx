@@ -255,9 +255,11 @@ export default function App() {
   const [showSpotifyInfo, setShowSpotifyInfo] = useState(false);
   const fileInputRef = useRef(null);
   const heroRef = useRef(null);
+  const heroNumRef = useRef(null);
   const stickyRef = useRef(null);
   const sentinelRef = useRef(null);
   const touchStartRef = useRef(null);
+  const [heroTranslateX, setHeroTranslateX] = useState(0);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [view, setView] = useState('top10');
 
@@ -296,6 +298,26 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Measure distance from the big hero number's right edge to its parent's
+  // right edge — so we know how far to translate it as it shrinks toward
+  // the top-right corner (FLIP-style transition into the sticky compact).
+  useEffect(() => {
+    const measure = () => {
+      const el = heroNumRef.current;
+      const parent = el?.parentElement;
+      if (!el || !parent) return;
+      const prev = el.style.transform;
+      el.style.transform = 'none';
+      const elRect = el.getBoundingClientRect();
+      const parentRect = parent.getBoundingClientRect();
+      el.style.transform = prev;
+      setHeroTranslateX(Math.max(0, parentRect.right - elRect.right));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [totalStreams]);
 
   // Detect "stuck" state for the sticky-top zone: a 1px sentinel sits right
   // above the sticky div. While it's in the viewport, the sticky hasn't hit
@@ -791,8 +813,8 @@ export default function App() {
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Hero — shrinks toward top-right to align with the sticky compact */}
-        <section ref={heroRef} className="text-right">
+        {/* Hero — left-aligned, slides+shrinks toward top-right corner */}
+        <section ref={heroRef}>
           <p
             className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4"
             style={{ opacity: 1 - scrollProgress }}
@@ -800,12 +822,13 @@ export default function App() {
             {heroLabel}
           </p>
           <p
+            ref={heroNumRef}
             className="mono font-bold tracking-tight tabular-nums leading-none inline-block"
             style={{
               color: totalStreams > 0 ? accent : '#404040',
               fontSize: 'clamp(3rem, 12vw, 7rem)',
               opacity: 1 - scrollProgress,
-              transform: `scale(${1 - scrollProgress * 0.7})`,
+              transform: `translateX(${heroTranslateX * scrollProgress}px) scale(${1 - scrollProgress * 0.7})`,
               transformOrigin: 'top right',
             }}
           >
@@ -864,7 +887,7 @@ export default function App() {
                             <div className="shrink-0">
                               <Cover url={t.cover} size={56} />
                             </div>
-                            <div className="flex-1 flex flex-col gap-1 min-w-0 pr-7">
+                            <div className="flex-1 flex flex-col gap-1 min-w-0">
                               <p className="text-[10px] uppercase tracking-wider text-neutral-600 mono truncate">
                                 {t.date ? fmtDateShort(t.date) : DASH}
                               </p>
@@ -1010,8 +1033,8 @@ export default function App() {
         className="border-t border-neutral-900 mt-8"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
-        <div className="max-w-3xl mx-auto px-6 py-4 space-y-3">
-          <div className="flex items-center gap-2 text-xs flex-wrap">
+        <div className="max-w-3xl mx-auto px-6 py-4 flex flex-col items-center gap-3 text-center">
+          <div className="flex items-center justify-center gap-2 text-xs flex-wrap">
             <button
               onClick={downloadBackup}
               className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
@@ -2109,8 +2132,9 @@ function Modal({ onClose, children, wide = false }) {
   }, [onClose]);
   return (
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-start justify-center px-4 pt-16 pb-6 z-50 overflow-y-auto"
       onClick={onClose}
+      style={{ paddingTop: `calc(env(safe-area-inset-top, 0px) + 3rem)` }}
     >
       <div
         className={`bg-neutral-900 border border-neutral-800 rounded-lg p-6 ${wide ? 'max-w-md' : 'max-w-sm'} w-full space-y-4 shadow-2xl`}
