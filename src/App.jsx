@@ -588,6 +588,7 @@ export default function App() {
         artistId: result.artist.id,
         artistName: result.artist.name,
         followers: result.artist.followers,
+        images: result.artist.images || [],
         lastSyncedAt: new Date().toISOString(),
       };
       setSpotifyLink(link);
@@ -671,17 +672,30 @@ export default function App() {
         className="border-b border-neutral-900 bg-[#0a0a0a]"
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
-        <div className="max-w-3xl mx-auto px-6 py-3 flex items-baseline gap-3">
+        <div className="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3">
           <span className="text-base font-bold tracking-tight">1streem</span>
           <span className="text-xs text-neutral-500">·</span>
           {spotifyLink ? (
             <button
               onClick={() => setShowSpotifyInfo(true)}
-              className="flex items-baseline gap-1.5 text-sm text-neutral-300 hover:text-neutral-100 truncate"
+              className="flex items-center gap-2 text-sm text-neutral-300 hover:text-neutral-100 truncate min-w-0"
               title="Spotify-Verbindung"
             >
+              {spotifyLink.images?.length > 0 ? (
+                <img
+                  src={
+                    spotifyLink.images[spotifyLink.images.length - 1]?.url ||
+                    spotifyLink.images[0]?.url
+                  }
+                  alt=""
+                  className="w-6 h-6 rounded-full object-cover shrink-0"
+                />
+              ) : (
+                <span className="shrink-0 inline-flex" style={{ color: '#1DB954' }}>
+                  <SpotifyIcon size={14} />
+                </span>
+              )}
               <span className="truncate">{spotifyLink.artistName || artistName}</span>
-              <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: '#1DB954' }} />
             </button>
           ) : editingArtist ? (
             <input
@@ -816,21 +830,42 @@ export default function App() {
                     {top10.slice(offset, offset + 5).map((t, idx) => {
                       const rank = offset + idx + 1;
                       return (
-                        <div key={t.id} className="rounded-lg border border-neutral-800 px-3 py-3">
-                          <div className="text-[9px] uppercase tracking-widest text-neutral-600 mb-1">
-                            {t.date || DASH}
-                          </div>
-                          <div className="flex items-baseline gap-1.5 mb-1">
-                            <span className="mono text-[10px] text-neutral-600 tabular-nums shrink-0">
+                        <div
+                          key={t.id}
+                          className="relative rounded-lg border border-neutral-800 p-3 flex flex-col gap-2"
+                        >
+                          {/* Rank top-right */}
+                          <div className="absolute top-2 right-2 h-6 w-6 flex items-center justify-center rounded-full bg-neutral-800">
+                            <span className="mono text-[10px] font-medium text-neutral-400 tabular-nums">
                               {String(rank).padStart(2, '0')}
                             </span>
-                            <span className="text-sm text-neutral-200 truncate min-w-0">
-                              {t.name}
-                            </span>
                           </div>
-                          <div className="mono text-sm tabular-nums whitespace-nowrap" style={{ color: accent }}>
+                          {/* Cover + title block */}
+                          <div className="flex gap-2 pr-8">
+                            <div className="shrink-0">
+                              <Cover url={t.cover} size={56} />
+                            </div>
+                            <div className="flex-1 flex flex-col gap-1 min-w-0">
+                              <p className="text-[10px] uppercase tracking-wider text-neutral-600">
+                                {t.date || DASH}
+                              </p>
+                              <p className="line-clamp-2 text-sm font-medium text-neutral-200 leading-tight">
+                                {t.name}
+                              </p>
+                            </div>
+                          </div>
+                          {/* Divider */}
+                          <div className="h-px w-full bg-neutral-800" />
+                          {/* Streams — big */}
+                          <p
+                            className="mono font-bold tabular-nums leading-none"
+                            style={{
+                              color: accent,
+                              fontSize: 'clamp(1.25rem, 6vw, 2rem)',
+                            }}
+                          >
                             {fmt(t._val)}
-                          </div>
+                          </p>
                         </div>
                       );
                     })}
@@ -1599,12 +1634,9 @@ function PlatformPickerRow({ platform, badge, onAdd }) {
   return (
     <button
       onClick={onAdd}
-      className="w-full flex items-center gap-3 px-3 py-2.5 rounded hover:bg-neutral-800/60 text-left transition-colors"
+      className="w-full flex items-center gap-3 pl-3 pr-3 py-2.5 rounded-r hover:bg-neutral-800/60 text-left transition-colors border-l-2"
+      style={{ borderLeftColor: platform.color }}
     >
-      <span
-        className="w-3 h-3 rounded-full shrink-0"
-        style={{ backgroundColor: platform.color }}
-      />
       <span className="flex-1 text-sm text-neutral-200">{platform.label}</span>
       {badge && (
         <span className="text-[9px] uppercase tracking-widest text-neutral-500">{badge}</span>
@@ -1676,8 +1708,10 @@ function EditPlatformRow({ platform, editing, onEdit, onCancelEdit, onSaveEdit, 
   }
 
   return (
-    <li className="flex items-center gap-2 px-2 py-2.5 rounded hover:bg-neutral-800/40">
-      <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: platform.color }} />
+    <li
+      className="flex items-center gap-2 pl-3 pr-2 py-2.5 rounded-r hover:bg-neutral-800/40 border-l-2"
+      style={{ borderLeftColor: platform.color }}
+    >
       <span className={`flex-1 text-sm ${platform.hidden ? 'text-neutral-500 line-through' : 'text-neutral-200'} truncate`}>
         {platform.label}
       </span>
