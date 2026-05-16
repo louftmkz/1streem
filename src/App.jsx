@@ -684,7 +684,7 @@ export default function App() {
                 borderColor: view === 'songs' ? accent : 'transparent',
               }}
             >
-              Alle Songs
+              {tab === 'all' ? 'Katalog' : 'Alle Songs'}
             </button>
           </div>
 
@@ -723,34 +723,36 @@ export default function App() {
 
           {view === 'songs' && (
             <>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="flex-1 relative">
-                  <input
-                    type="search"
-                    placeholder="Suche..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="w-full bg-neutral-900 border border-neutral-800 rounded pl-3 pr-9 py-2 placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
-                    style={{ fontSize: '16px' }}
-                  />
-                  {search && (
-                    <button
-                      type="button"
-                      onClick={() => setSearch('')}
-                      aria-label="Suche löschen"
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-200 w-7 h-7 flex items-center justify-center text-lg leading-none rounded"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-                {tab === 'all' && (
+              {tab === 'all' && (
+                <div className="flex items-center gap-2 mb-3">
                   <button
                     onClick={() => setShowAdd(!showAdd)}
                     className="px-4 py-2 rounded font-bold text-sm text-black whitespace-nowrap"
                     style={{ backgroundColor: accent }}
                   >
                     {showAdd ? '× Abbrechen' : '+ Song'}
+                  </button>
+                  {/* Phase 3 placeholder: Connect Spotify + Refresh */}
+                </div>
+              )}
+
+              <div className="relative mb-4">
+                <input
+                  type="search"
+                  placeholder="Suche..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full bg-neutral-900 border border-neutral-800 rounded pl-3 pr-9 py-2 placeholder:text-neutral-600 focus:outline-none focus:border-neutral-700"
+                  style={{ fontSize: '16px' }}
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    aria-label="Suche löschen"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-200 w-7 h-7 flex items-center justify-center text-lg leading-none rounded"
+                  >
+                    ×
                   </button>
                 )}
               </div>
