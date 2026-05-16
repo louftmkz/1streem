@@ -33,7 +33,7 @@ export function getArtist(id) {
   return request(`/artists/${id}`);
 }
 
-export function getArtistAlbums(id, { offset = 0, limit = 50 } = {}) {
+export function getArtistAlbums(id, { offset = 0, limit = 20 } = {}) {
   const params = new URLSearchParams({
     offset: String(offset),
     limit: String(limit),
@@ -50,8 +50,8 @@ export function getAlbum(id) {
 export async function getAllArtistAlbums(id) {
   const all = [];
   let offset = 0;
-  for (let i = 0; i < 40; i++) {
-    const data = await getArtistAlbums(id, { offset, limit: 50 });
+  for (let i = 0; i < 50; i++) {
+    const data = await getArtistAlbums(id, { offset, limit: 20 });
     all.push(...(data.items || []));
     if (!data.next || (data.items || []).length === 0) break;
     offset += data.items.length;
