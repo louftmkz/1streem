@@ -12,8 +12,18 @@ const SONGS_STORAGE = '1streem-songs-v3';
 const SONGS_LEGACY_V2 = '1streem-songs-v2';
 const SONGS_LEGACY_V1 = '1streem-songs-v1';
 const PLATFORMS_STORAGE = '1streem-platforms-v1';
-const ARTIST_NAME = import.meta.env.VITE_ARTIST_NAME || 'Lou FTMKZ';
+const ARTIST_NAME_STORAGE = '1streem-artist-name-v1';
+const DEFAULT_ARTIST_NAME =
+  import.meta.env.VITE_ARTIST_NAME || 'Artist Name';
 const SUPPORT_EMAIL = 'lou+1streem@fmcrew.de';
+
+function loadArtistName() {
+  try {
+    const stored = localStorage.getItem(ARTIST_NAME_STORAGE);
+    if (stored && stored.trim()) return stored;
+  } catch {}
+  return DEFAULT_ARTIST_NAME;
+}
 
 const ALL_TAB = { id: 'all', label: 'Alle', short: 'Alle', color: '#fafafa' };
 
@@ -207,12 +217,15 @@ export default function App() {
   const [editingId, setEditingId] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [pendingImport, setPendingImport] = useState(null);
-  const [showAddPlatform, setShowAddPlatform] = useState(false);
-  const [showEditPlatforms, setShowEditPlatforms] = useState(false);
+  const [showPlatformsModal, setShowPlatformsModal] = useState(false);
   const [showTestimonial, setShowTestimonial] = useState(false);
+  const [artistName, setArtistName] = useState(loadArtistName);
+  const [editingArtist, setEditingArtist] = useState(false);
+  const [isStuck, setIsStuck] = useState(false);
   const fileInputRef = useRef(null);
   const heroRef = useRef(null);
   const stickyRef = useRef(null);
+  const sentinelRef = useRef(null);
   const touchStartRef = useRef(null);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [view, setView] = useState('top10');
@@ -224,6 +237,24 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(PLATFORMS_STORAGE, JSON.stringify(platforms)); } catch {}
   }, [platforms]);
+  useEffect(() => {
+    try { localStorage.setItem(ARTIST_NAME_STORAGE, artistName); } catch {}
+  }, [artistName]);
+
+  // Detect "stuck" state for the sticky-top zone: a 1px sentinel sits right
+  // above the sticky div. While it's in the viewport, the sticky hasn't hit
+  // top:0 yet. Once it scrolls past, sticky is stuck → enable safe-area
+  // padding so the iOS status-bar doesn't overlap the tabs.
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => setIsStuck(!entry.isIntersecting),
+      { threshold: 0 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
 
   // Visible (non-hidden) platforms — drive UI everywhere
   const visiblePlatforms = useMemo(() => platforms.filter((p) => !p.hidden), [platforms]);
@@ -524,24 +555,60 @@ export default function App() {
         }
       `}</style>
 
-      {/* Sticky top zone */}
-      <div
-        ref={stickyRef}
-        className="sticky top-0 z-30 bg-[#0a0a0a]"
+      {/* Header — NOT sticky, scrolls away */}
+      <header
+        className="border-b border-neutral-900 bg-[#0a0a0a]"
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
-        <header className="border-b border-neutral-900">
-          <div className="max-w-3xl mx-auto px-6 py-3 flex items-baseline gap-3">
-            <span className="text-base font-bold tracking-tight">1streem</span>
-            <span className="text-xs text-neutral-500">· {ARTIST_NAME}</span>
-          </div>
-        </header>
+        <div className="max-w-3xl mx-auto px-6 py-3 flex items-baseline gap-3">
+          <span className="text-base font-bold tracking-tight">1streem</span>
+          <span className="text-xs text-neutral-500">·</span>
+          {editingArtist ? (
+            <input
+              type="text"
+              autoFocus
+              defaultValue={artistName}
+              onBlur={(e) => {
+                const v = e.currentTarget.value.trim();
+                if (v) setArtistName(v);
+                setEditingArtist(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+                if (e.key === 'Escape') setEditingArtist(false);
+              }}
+              className="flex-1 min-w-0 bg-transparent border-b border-neutral-700 focus:border-neutral-400 outline-none text-sm text-neutral-300"
+              style={{ fontSize: '16px' }}
+            />
+          ) : (
+            <button
+              onClick={() => setEditingArtist(true)}
+              className="text-sm text-neutral-500 hover:text-neutral-300 truncate text-left"
+              title="Artist Name bearbeiten"
+            >
+              {artistName}
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* Sentinel — 1px element used by IntersectionObserver to detect when
+         the sticky zone below has hit the top of the viewport. */}
+      <div ref={sentinelRef} aria-hidden="true" style={{ height: 1 }} />
+
+      {/* Sticky top zone — tabs + compact hero */}
+      <div
+        ref={stickyRef}
+        className="sticky top-0 z-30 bg-[#0a0a0a] transition-[padding] duration-150 ease-out"
+        style={{
+          paddingTop: isStuck ? 'env(safe-area-inset-top, 0px)' : '0px',
+        }}
+      >
         <TabBar
           tabs={TABS}
           active={tab}
           onSelect={setTab}
-          onAddPlatform={() => setShowAddPlatform(true)}
-          onEditPlatforms={() => setShowEditPlatforms(true)}
+          onOpenManager={() => setShowPlatformsModal(true)}
         />
         <div
           className="border-b overflow-hidden"
@@ -765,9 +832,6 @@ export default function App() {
           >
             Mitmachen?
           </button>
-          <span className="text-neutral-700 ml-auto mono tabular-nums">
-            {songs.length} {songs.length === 1 ? 'Song' : 'Songs'}
-          </span>
         </div>
       </footer>
 
@@ -835,28 +899,15 @@ export default function App() {
         </Modal>
       )}
 
-      {showAddPlatform && (
-        <AddPlatformModal
+      {showPlatformsModal && (
+        <ManagePlatformsModal
           activePlatforms={platforms}
-          onAddLibrary={(id) => {
-            addPlatformFromLibrary(id);
-            setShowAddPlatform(false);
-          }}
-          onAddCustom={(data) => {
-            addCustomPlatform(data);
-            setShowAddPlatform(false);
-          }}
-          onClose={() => setShowAddPlatform(false)}
-        />
-      )}
-
-      {showEditPlatforms && (
-        <EditPlatformsModal
-          platforms={platforms}
+          onAddLibrary={addPlatformFromLibrary}
+          onAddCustom={addCustomPlatform}
           onToggleHidden={togglePlatformHidden}
           onUpdate={updatePlatformMeta}
           onRemove={removePlatform}
-          onClose={() => setShowEditPlatforms(false)}
+          onClose={() => setShowPlatformsModal(false)}
         />
       )}
 
@@ -874,7 +925,7 @@ export default function App() {
 // Components
 // =============================================================================
 
-function TabBar({ tabs, active, onSelect, onAddPlatform, onEditPlatforms }) {
+function TabBar({ tabs, active, onSelect, onOpenManager }) {
   const containerRef = useRef(null);
   const activeRef = useRef(null);
 
@@ -913,22 +964,14 @@ function TabBar({ tabs, active, onSelect, onAddPlatform, onEditPlatforms }) {
               {t.label}
             </button>
           ))}
-          <div className="flex items-center ml-2 gap-1 shrink-0">
+          <div className="flex items-center ml-2 shrink-0">
             <button
-              onClick={onAddPlatform}
-              className="p-2 text-neutral-500 hover:text-neutral-200 transition-colors"
-              aria-label="Plattform hinzufügen"
-              title="Plattform hinzufügen"
-            >
-              <PlusIcon />
-            </button>
-            <button
-              onClick={onEditPlatforms}
+              onClick={onOpenManager}
               className="p-2 text-neutral-500 hover:text-neutral-200 transition-colors"
               aria-label="Plattformen verwalten"
               title="Plattformen verwalten"
             >
-              <EditIcon />
+              <PlusIcon />
             </button>
           </div>
         </div>
@@ -1153,25 +1196,36 @@ function AddSongForm({ accent, onSave, onCancel }) {
   );
 }
 
-function AddPlatformModal({ activePlatforms, onAddLibrary, onAddCustom, onClose }) {
-  const [mode, setMode] = useState('library'); // 'library' | 'custom'
+function ManagePlatformsModal({
+  activePlatforms,
+  onAddLibrary,
+  onAddCustom,
+  onToggleHidden,
+  onUpdate,
+  onRemove,
+  onClose,
+}) {
+  const [mode, setMode] = useState('list'); // 'list' | 'custom'
+  const [editingId, setEditingId] = useState(null);
   const [name, setName] = useState('');
   const [color, setColor] = useState('#8b5cf6');
 
   const activeIds = new Set(activePlatforms.map((p) => p.id));
   const available = PLATFORM_LIBRARY.filter((p) => !activeIds.has(p.id));
-  const hiddenActive = activePlatforms.filter((p) => p.hidden);
 
   const submitCustom = (e) => {
     e?.preventDefault();
     if (!name.trim()) return;
     onAddCustom({ label: name, color });
+    setName('');
+    setColor('#8b5cf6');
+    setMode('list');
   };
 
   return (
     <Modal onClose={onClose} wide>
       <div className="flex items-baseline justify-between">
-        <h3 className="text-base font-bold text-neutral-100">Plattform hinzufügen</h3>
+        <h3 className="text-base font-bold text-neutral-100">Plattformen</h3>
         <button
           onClick={onClose}
           className="text-neutral-500 hover:text-neutral-200 text-lg leading-none"
@@ -1183,14 +1237,14 @@ function AddPlatformModal({ activePlatforms, onAddLibrary, onAddCustom, onClose 
 
       <div className="flex gap-4 border-b border-neutral-800 -mx-1">
         <button
-          onClick={() => setMode('library')}
+          onClick={() => setMode('list')}
           className="py-2 text-sm font-semibold border-b-2 -mb-px transition-colors"
           style={{
-            color: mode === 'library' ? '#fafafa' : '#737373',
-            borderColor: mode === 'library' ? '#fafafa' : 'transparent',
+            color: mode === 'list' ? '#fafafa' : '#737373',
+            borderColor: mode === 'list' ? '#fafafa' : 'transparent',
           }}
         >
-          Bekannte Plattform
+          Plattformen
         </button>
         <button
           onClick={() => setMode('custom')}
@@ -1200,42 +1254,68 @@ function AddPlatformModal({ activePlatforms, onAddLibrary, onAddCustom, onClose 
             borderColor: mode === 'custom' ? '#fafafa' : 'transparent',
           }}
         >
-          Eigene Plattform
+          Weitere hinzufügen
         </button>
       </div>
 
-      {mode === 'library' && (
-        <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
-          {hiddenActive.length > 0 && (
-            <>
-              <p className="text-[10px] uppercase tracking-widest text-neutral-500 pt-1">
-                Versteckt — re-aktivieren
-              </p>
-              {hiddenActive.map((p) => (
-                <PlatformPickerRow
-                  key={p.id}
-                  platform={p}
-                  badge="Hidden"
-                  onAdd={() => onAddLibrary(p.id)}
-                />
-              ))}
-              <div className="border-t border-neutral-800 my-2" />
-            </>
-          )}
-          {available.length === 0 && hiddenActive.length === 0 ? (
-            <p className="text-sm text-neutral-500 py-4">
-              Alle bekannten Plattformen sind bereits aktiv. Lege eine eigene Plattform an.
+      {mode === 'list' && (
+        <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-1 -mx-1">
+          {/* Active section */}
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-neutral-500 px-1 pb-2">
+              Aktiv ({activePlatforms.filter((p) => !p.hidden).length}) ·
+              ausblenden, bearbeiten oder entfernen
             </p>
-          ) : (
-            available.map((p) => (
-              <PlatformPickerRow key={p.id} platform={p} onAdd={() => onAddLibrary(p.id)} />
-            ))
-          )}
+            {activePlatforms.length === 0 ? (
+              <p className="text-sm text-neutral-500 py-2 px-1">Keine Plattformen aktiv.</p>
+            ) : (
+              <ul className="space-y-1">
+                {activePlatforms.map((p) => (
+                  <EditPlatformRow
+                    key={p.id}
+                    platform={p}
+                    editing={editingId === p.id}
+                    onEdit={() => setEditingId(p.id)}
+                    onCancelEdit={() => setEditingId(null)}
+                    onSaveEdit={(updates) => {
+                      onUpdate(p.id, updates);
+                      setEditingId(null);
+                    }}
+                    onToggleHidden={() => onToggleHidden(p.id)}
+                    onRemove={() => onRemove(p.id)}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="border-t border-neutral-800" />
+
+          {/* Library section */}
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-neutral-500 px-1 pb-2">
+              Weitere bekannte Plattformen · 1 Klick zum Hinzufügen
+            </p>
+            {available.length === 0 ? (
+              <p className="text-sm text-neutral-500 py-2 px-1">
+                Alle bekannten Plattformen sind bereits in deiner Liste.
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {available.map((p) => (
+                  <PlatformPickerRow key={p.id} platform={p} onAdd={() => onAddLibrary(p.id)} />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       {mode === 'custom' && (
         <form onSubmit={submitCustom} className="space-y-4">
+          <p className="text-xs text-neutral-500">
+            Eigene/Nischen-Plattform anlegen (z.B. lokale Dienste, neue Anbieter).
+          </p>
           <div>
             <label className="block text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-2">
               Name
@@ -1267,7 +1347,7 @@ function AddPlatformModal({ activePlatforms, onAddLibrary, onAddCustom, onClose 
                 className="ml-auto px-3 py-1 rounded-full text-xs uppercase tracking-wider"
                 style={{ color, border: `1px solid ${color}55` }}
               >
-                Vorschau
+                {name || 'Vorschau'}
               </span>
             </div>
           </div>
@@ -1309,53 +1389,6 @@ function PlatformPickerRow({ platform, badge, onAdd }) {
       )}
       <span className="text-neutral-500 text-lg leading-none">+</span>
     </button>
-  );
-}
-
-function EditPlatformsModal({ platforms, onToggleHidden, onUpdate, onRemove, onClose }) {
-  const [editingId, setEditingId] = useState(null);
-
-  return (
-    <Modal onClose={onClose} wide>
-      <div className="flex items-baseline justify-between">
-        <h3 className="text-base font-bold text-neutral-100">Plattformen verwalten</h3>
-        <button
-          onClick={onClose}
-          className="text-neutral-500 hover:text-neutral-200 text-lg leading-none"
-          aria-label="Schließen"
-        >
-          ×
-        </button>
-      </div>
-
-      {platforms.length === 0 ? (
-        <p className="text-sm text-neutral-500 py-4">Keine Plattformen aktiv.</p>
-      ) : (
-        <ul className="space-y-1 max-h-[60vh] overflow-y-auto pr-1 -mx-1">
-          {platforms.map((p) => (
-            <EditPlatformRow
-              key={p.id}
-              platform={p}
-              editing={editingId === p.id}
-              onEdit={() => setEditingId(p.id)}
-              onCancelEdit={() => setEditingId(null)}
-              onSaveEdit={(updates) => {
-                onUpdate(p.id, updates);
-                setEditingId(null);
-              }}
-              onToggleHidden={() => onToggleHidden(p.id)}
-              onRemove={() => onRemove(p.id)}
-            />
-          ))}
-        </ul>
-      )}
-
-      <p className="text-xs text-neutral-600 pt-2 border-t border-neutral-800">
-        <strong className="text-neutral-400">Auge</strong> versteckt — Daten bleiben.{' '}
-        <strong className="text-neutral-400">Mülleimer</strong> entfernt aus der Liste — Daten in
-        Songs werden technisch behalten, kommen bei Re-Add zurück.
-      </p>
-    </Modal>
   );
 }
 
@@ -1555,15 +1588,6 @@ function PlusIcon({ size = 18 }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <line x1="12" y1="5" x2="12" y2="19" />
       <line x1="5" y1="12" x2="19" y2="12" />
-    </svg>
-  );
-}
-
-function EditIcon({ size = 18 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
     </svg>
   );
 }
