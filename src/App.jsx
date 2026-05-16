@@ -176,6 +176,13 @@ function fmt(n) {
   return Number(n).toLocaleString('de-DE');
 }
 
+// ISO yyyy-mm-dd → dd.mm.yy (kompakt für enge Spalten)
+function fmtDateShort(iso) {
+  const m = (iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return iso || '';
+  return `${m[3]}.${m[2]}.${m[1].slice(2)}`;
+}
+
 function uuid() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -611,6 +618,19 @@ export default function App() {
     setSongs(next);
     setImportDiff(null);
   };
+  const handleResetAllData = () => {
+    if (!window.confirm(
+      'ALLE Daten löschen?\n\nSongs, Plattformen, Spotify-Verbindung, Artist-Name — alles zurück auf Default. Die Seite lädt danach neu.\n\nDieser Schritt kann nicht rückgängig gemacht werden.',
+    )) return;
+    try { localStorage.removeItem(SONGS_STORAGE); } catch {}
+    try { localStorage.removeItem(SONGS_LEGACY_V2); } catch {}
+    try { localStorage.removeItem(SONGS_LEGACY_V1); } catch {}
+    try { localStorage.removeItem(PLATFORMS_STORAGE); } catch {}
+    try { localStorage.removeItem(ARTIST_NAME_STORAGE); } catch {}
+    try { localStorage.removeItem(SPOTIFY_LINK_STORAGE); } catch {}
+    try { spotifyAuth.logout(); } catch {}
+    window.location.reload();
+  };
   const handleDisconnectSpotify = () => {
     if (!window.confirm(
       'Spotify trennen? Artist-Name wird wieder editierbar. Songs bleiben unangetastet.',
@@ -771,8 +791,8 @@ export default function App() {
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Hero */}
-        <section ref={heroRef}>
+        {/* Hero — shrinks toward top-right to align with the sticky compact */}
+        <section ref={heroRef} className="text-right">
           <p
             className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-4"
             style={{ opacity: 1 - scrollProgress }}
@@ -780,12 +800,13 @@ export default function App() {
             {heroLabel}
           </p>
           <p
-            className="mono font-bold tracking-tight tabular-nums leading-none origin-top-left"
+            className="mono font-bold tracking-tight tabular-nums leading-none inline-block"
             style={{
               color: totalStreams > 0 ? accent : '#404040',
               fontSize: 'clamp(3rem, 12vw, 7rem)',
               opacity: 1 - scrollProgress,
               transform: `scale(${1 - scrollProgress * 0.7})`,
+              transformOrigin: 'top right',
             }}
           >
             {fmt(totalStreams)}
@@ -832,22 +853,20 @@ export default function App() {
                       return (
                         <div
                           key={t.id}
-                          className="relative rounded-lg border border-neutral-800 p-3 flex flex-col gap-2"
+                          className="relative rounded-lg border border-neutral-800 p-3 flex flex-col gap-2 overflow-hidden"
                         >
-                          {/* Rank top-right */}
-                          <div className="absolute top-2 right-2 h-6 w-6 flex items-center justify-center rounded-full bg-neutral-800">
-                            <span className="mono text-[10px] font-medium text-neutral-400 tabular-nums">
-                              {String(rank).padStart(2, '0')}
-                            </span>
-                          </div>
+                          {/* Rank top-right, absolutely positioned */}
+                          <span className="pointer-events-none absolute top-2 right-2 h-6 w-6 flex items-center justify-center rounded-full bg-neutral-800 mono text-[10px] font-medium text-neutral-400 tabular-nums">
+                            {String(rank).padStart(2, '0')}
+                          </span>
                           {/* Cover + title block */}
-                          <div className="flex gap-2 pr-8">
+                          <div className="flex gap-2">
                             <div className="shrink-0">
                               <Cover url={t.cover} size={56} />
                             </div>
-                            <div className="flex-1 flex flex-col gap-1 min-w-0">
-                              <p className="text-[10px] uppercase tracking-wider text-neutral-600">
-                                {t.date || DASH}
+                            <div className="flex-1 flex flex-col gap-1 min-w-0 pr-7">
+                              <p className="text-[10px] uppercase tracking-wider text-neutral-600 mono truncate">
+                                {t.date ? fmtDateShort(t.date) : DASH}
                               </p>
                               <p className="line-clamp-2 text-sm font-medium text-neutral-200 leading-tight">
                                 {t.name}
@@ -856,9 +875,9 @@ export default function App() {
                           </div>
                           {/* Divider */}
                           <div className="h-px w-full bg-neutral-800" />
-                          {/* Streams — big */}
+                          {/* Streams — big, right-aligned */}
                           <p
-                            className="mono font-bold tabular-nums leading-none"
+                            className="mono font-bold tabular-nums leading-none text-right"
                             style={{
                               color: accent,
                               fontSize: 'clamp(1.25rem, 6vw, 2rem)',
@@ -991,25 +1010,34 @@ export default function App() {
         className="border-t border-neutral-900 mt-8"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
-        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-2 text-xs flex-wrap">
-          <button
-            onClick={downloadBackup}
-            className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
-          >
-            Backup
-          </button>
-          <button
-            onClick={pickRestoreFile}
-            className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
-          >
-            Wiederherstellen
-          </button>
-          <button
-            onClick={() => setShowTestimonial(true)}
-            className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
-          >
-            Mitmachen?
-          </button>
+        <div className="max-w-3xl mx-auto px-6 py-4 space-y-3">
+          <div className="flex items-center gap-2 text-xs flex-wrap">
+            <button
+              onClick={downloadBackup}
+              className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
+            >
+              Export
+            </button>
+            <button
+              onClick={pickRestoreFile}
+              className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
+            >
+              Import
+            </button>
+            <button
+              onClick={() => setShowTestimonial(true)}
+              className="px-3 py-2 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-400 transition-colors"
+            >
+              Early Access
+            </button>
+            <button
+              onClick={handleResetAllData}
+              className="px-3 py-2 rounded bg-neutral-900 hover:bg-red-900/40 text-neutral-500 hover:text-red-300 transition-colors"
+            >
+              Alle Daten löschen
+            </button>
+          </div>
+          <p className="text-[11px] text-neutral-600">© 2026 1streem</p>
         </div>
       </footer>
 
@@ -1249,41 +1277,16 @@ function Stat({ label, value }) {
 function CatalogRow({ song, platforms, onTogglePlatform, onDelete }) {
   const total = songTotal(song, platforms);
   return (
-    <li className="py-3">
-      <div className="flex items-start gap-3">
+    <li className="py-3 space-y-2">
+      {/* Top row: cover | name+date | streams + delete */}
+      <div className="flex items-center gap-3">
         <div className="shrink-0">
           <Cover url={song.cover} size={44} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-neutral-200 truncate">{song.name}</div>
-          <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5">
-            {song.date || DASH}
-          </div>
-          <div className="flex flex-wrap gap-1 mt-2">
-            {platforms.map((p) => {
-              const enabled = !!song.platforms?.[p.id];
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => onTogglePlatform(p.id)}
-                  className="px-2.5 py-0.5 rounded-full text-[10px] uppercase font-normal tracking-wider transition-colors inline-flex items-center gap-1"
-                  style={{
-                    backgroundColor: 'transparent',
-                    color: enabled ? p.color : '#525252',
-                    borderWidth: '1px',
-                    borderStyle: 'solid',
-                    borderColor: enabled ? `${p.color}55` : '#262626',
-                  }}
-                >
-                  {enabled && (
-                    <span aria-hidden="true" className="leading-none text-[9px]">
-                      ✓
-                    </span>
-                  )}
-                  {p.short}
-                </button>
-              );
-            })}
+          <div className="text-[10px] uppercase tracking-wider text-neutral-600 mt-0.5 mono">
+            {song.date ? fmtDateShort(song.date) : DASH}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -1298,6 +1301,33 @@ function CatalogRow({ song, platforms, onTogglePlatform, onDelete }) {
             ×
           </button>
         </div>
+      </div>
+      {/* Pills row — full width below */}
+      <div className="flex flex-wrap gap-1">
+        {platforms.map((p) => {
+          const enabled = !!song.platforms?.[p.id];
+          return (
+            <button
+              key={p.id}
+              onClick={() => onTogglePlatform(p.id)}
+              className="px-2.5 py-0.5 rounded-full text-[10px] uppercase font-normal tracking-wider transition-colors inline-flex items-center gap-1"
+              style={{
+                backgroundColor: 'transparent',
+                color: enabled ? p.color : '#525252',
+                borderWidth: '1px',
+                borderStyle: 'solid',
+                borderColor: enabled ? `${p.color}55` : '#262626',
+              }}
+            >
+              {enabled && (
+                <span aria-hidden="true" className="leading-none text-[9px]">
+                  ✓
+                </span>
+              )}
+              {p.short}
+            </button>
+          );
+        })}
       </div>
     </li>
   );
@@ -1581,7 +1611,6 @@ function ManagePlatformsModal({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              autoFocus
               required
               placeholder="z.B. SoundOn, Napster, Resso ..."
               className="w-full bg-[#0a0a0a] border border-neutral-800 rounded px-3 py-3 text-base focus:outline-none focus:border-neutral-700"
